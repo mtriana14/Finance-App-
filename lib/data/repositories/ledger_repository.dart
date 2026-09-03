@@ -1,0 +1,238 @@
+import 'package:drift/drift.dart';
+
+import '../../core/format/dates.dart';
+import '../../domain/models/ledger_entry.dart';
+import '../../domain/models/ledger_kind.dart';
+import '../../domain/services/ledger_math.dart';
+import '../db/database.dart';
+
+/// Reads and writes the ledger.
+///
+/// Queries here return *everything*, including entries a day-close has
+/// replaced, and leave the "does this count?" decision to [LedgerMath]. That is
+/// what stops two screens from disagreeing: Historial needs to show a replaced
+/// entry grayed out, the dashboard needs to ignore it, and both are looking at
+/// the same rows.
+class LedgerRepository {
+  LedgerRepository(this._db);
+
+  final AppDatabase _db;
+
+  // -------------------------------------------------------------------------
+  // Reads
+  // -------------------------------------------------------------------------
+
+  Stream<List<LedgerEntry>> _watchJoined(Expression<bool> Function($LedgerEntriesTable t) where) {
+    final query = _db.select(_db.ledgerEntries).join([
+      leftOuterJoin(_db.customers, _db.customers.id.equalsExp(_db.ledgerEntries.customerId)),
+    ])
+      ..where(where(_db.ledgerEntries))
+      ..orderBy([
+        OrderingTerm.desc(_db.ledgerEntries.occurredAt),
+        OrderingTerm.desc(_db.ledgerEntries.id),
+      ]);
+
+    return query.watch().map(
+          (rows) => [
+            for (final row in rows)
+              row.readTable(_db.ledgerEntries).toDomain(
+                    customerName: row.readTableOrNull(_db.customers)?.name,
+                  ),
+          ],
+        );
+  }
+
+  Stream<List<LedgerEntry>> watchDay(DateTime day) {
+    final key = Dates.businessDay(day);
+    return _watchJoined((t) => t.businessDay.equals(key));
+  }
+
+  /// Inclusive on both ends, by business day.
+  Stream<List<LedgerEntry>> watchRange(DateTime from, DateTime to) {
+    final a = Dates.businessDay(from);
+    final b = Dates.businessDay(to);
+    return _watchJoined((t) => t.businessDay.isBetweenValues(a, b));
+  }
+
+  /// Everything, newest first. Historial pages through this in the UI; the
+  /// index on `(business_day, occurred_at)` keeps it cheap.
+  Stream<List<LedgerEntry>> watchAll() => _watchJoined((t) => const Constant(true));
+
+  Stream<List<LedgerEntry>> watchAllFiado() => _watchJoined(
+        (t) => t.kind.isInValues([LedgerKind.fiadoIssued, LedgerKind.fiadoPayment]),
+      );
+
+  Stream<List<LedgerEntry>> watchForCustomer(int customerId) =>
+      _watchJoined((t) => t.customerId.equals(customerId));
+
+  /// The day the merchant first logged anything, so the 7-day chart can tell a
+  /// genuine $0 day from a day before they started.
+  Stream<DateTime?> watchFirstActivityDay() {
+    final min = _db.ledgerEntries.businessDay.min();
+    final query = _db.selectOnly(_db.ledgerEntries)..addColumns([min]);
+    return query.watchSingleOrNull().map((row) {
+      final value = row?.read(min);
+      return value == null ? null : Dates.fromBusinessDay(value);
+    });
+  }
+
+  /// Cash logged one sale at a time today, ignoring anything a previous close
+  /// already replaced. Drives the "esto REEMPLAZA" warning.
+  Future<int> individualCashFor(DateTime day) async {
+    final key = Dates.businessDay(day);
+    final sum = _db.ledgerEntries.amountCents.sum();
+    final query = _db.selectOnly(_db.ledgerEntries)
+      ..addColumns([sum])
+      ..where(_db.ledgerEntries.businessDay.equals(key) &
+          _db.ledgerEntries.kind.equalsValue(LedgerKind.cashSale) &
+          _db.ledgerEntries.isCloseout.equals(false) &
+          _db.ledgerEntries.supersededByCloseout.equals(false));
+    final row = await query.getSingleOrNull();
+    return row?.read(sum) ?? 0;
+  }
+
+  Future<bool> hasCloseoutFor(DateTime day) async {
+    final key = Dates.businessDay(day);
+    final query = _db.select(_db.ledgerEntries)
+      ..where((t) =>
+          t.businessDay.equals(key) &
+          t.isCloseout.equals(true) &
+          t.supersededByCloseout.equals(false))
+      ..limit(1);
+    return (await query.get()).isNotEmpty;
+  }
+
+  /// Fiado payments recorded in the last few minutes — the input to the
+  /// double-counting guard.
+  Future<List<LedgerEntry>> recentFiadoPayments({
+    required DateTime now,
+    Duration window = const Duration(minutes: 5),
+  }) async {
+    final since = now.subtract(window);
+    final query = _db.select(_db.ledgerEntries)
+      ..where((t) => t.kind.equalsValue(LedgerKind.fiadoPayment) & t.createdAt.isBiggerThanValue(since))
+      ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]);
+    return [for (final row in await query.get()) row.toDomain()];
+  }
+
+  /// Full dump for CSV export, oldest first so the file reads like a ledger.
+  Future<List<LedgerEntry>> exportAll() async {
+    final query = _db.select(_db.ledgerEntries).join([
+      leftOuterJoin(_db.customers, _db.customers.id.equalsExp(_db.ledgerEntries.customerId)),
+    ])
+      ..orderBy([OrderingTerm.asc(_db.ledgerEntries.occurredAt)]);
+    final rows = await query.get();
+    return [
+      for (final row in rows)
+        row.readTable(_db.ledgerEntries).toDomain(
+              customerName: row.readTableOrNull(_db.customers)?.name,
+            ),
+    ];
+  }
+
+  // -------------------------------------------------------------------------
+  // Writes
+  // -------------------------------------------------------------------------
+
+  Future<int> addSale({
+    required LedgerKind kind,
+    required int amountCents,
+    String? note,
+    int? customerId,
+    DateTime? occurredAt,
+    EntrySource source = EntrySource.manual,
+  }) {
+    final when = occurredAt ?? DateTime.now();
+    return _db.into(_db.ledgerEntries).insert(
+          LedgerEntriesCompanion.insert(
+            kind: kind,
+            amountCents: amountCents,
+            occurredAt: when,
+            businessDay: Dates.businessDay(when),
+            note: Value(_trimNote(note)),
+            customerId: Value(customerId),
+            source: Value(source),
+            createdAt: DateTime.now(),
+          ),
+        );
+  }
+
+  Future<int> addFiado({required int customerId, required int amountCents, String? note}) =>
+      addSale(
+        kind: LedgerKind.fiadoIssued,
+        amountCents: amountCents,
+        note: note,
+        customerId: customerId,
+      );
+
+  Future<int> addFiadoPayment({required int customerId, required int amountCents, String? note}) =>
+      addSale(
+        kind: LedgerKind.fiadoPayment,
+        amountCents: amountCents,
+        note: note,
+        customerId: customerId,
+      );
+
+  /// End-of-day reconciliation.
+  ///
+  /// This *replaces* the day's cash rather than adding to it: every cash entry
+  /// still standing for that day is marked superseded (including an earlier
+  /// close, so re-running it doesn't stack), and one close entry is written in
+  /// their place. Superseded rows are never deleted — Historial still shows
+  /// them, grayed, so the merchant can see what the close absorbed.
+  Future<void> saveCloseout({
+    required DateTime day,
+    required int drawerCents,
+    required int floatCents,
+  }) async {
+    final key = Dates.businessDay(day);
+    final sales = LedgerMath.closeoutSales(drawerCents: drawerCents, floatCents: floatCents);
+    final now = DateTime.now();
+    // A close is stamped at the moment it is saved, unless it is being written
+    // for a past day, where it lands at the end of that day.
+    final occurredAt = Dates.businessDay(now) == key
+        ? now
+        : DateTime(day.year, day.month, day.day, 23, 59);
+
+    await _db.transaction(() async {
+      await (_db.update(_db.ledgerEntries)
+            ..where((t) =>
+                t.businessDay.equals(key) &
+                t.kind.equalsValue(LedgerKind.cashSale) &
+                t.supersededByCloseout.equals(false)))
+          .write(const LedgerEntriesCompanion(supersededByCloseout: Value(true)));
+
+      await _db.into(_db.ledgerEntries).insert(
+            LedgerEntriesCompanion.insert(
+              kind: LedgerKind.cashSale,
+              amountCents: sales,
+              occurredAt: occurredAt,
+              businessDay: key,
+              note: const Value('Cierre del día'),
+              isCloseout: const Value(true),
+              createdAt: now,
+            ),
+          );
+    });
+  }
+
+  /// Mistake correction, allowed only within 24 hours of logging.
+  /// Returns false if the window has closed.
+  Future<bool> deleteEntry(int id, {DateTime? now}) async {
+    final at = now ?? DateTime.now();
+    final row = await (_db.select(_db.ledgerEntries)..where((t) => t.id.equals(id)))
+        .getSingleOrNull();
+    if (row == null) return false;
+    if (!row.toDomain().deletableAt(at)) return false;
+    await (_db.delete(_db.ledgerEntries)..where((t) => t.id.equals(id))).go();
+    return true;
+  }
+
+  Future<void> deleteAll() => _db.delete(_db.ledgerEntries).go();
+
+  static String? _trimNote(String? note) {
+    final t = note?.trim();
+    if (t == null || t.isEmpty) return null;
+    return t.length <= 80 ? t : t.substring(0, 80);
+  }
+}
