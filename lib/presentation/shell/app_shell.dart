@@ -60,7 +60,15 @@ class AppShell extends ConsumerWidget {
       ),
       bottomNavigationBar: _BottomNav(
         index: index,
-        onTap: (i) => ref.read(shellTabProvider.notifier).state = i,
+        onTap: (i) {
+          // Reaching Historial from the tab means "show me everything". The
+          // today-only scope belongs to the dashboard card that set it, and
+          // would otherwise stay pinned across unrelated visits.
+          if (i == 2 && index != 2) {
+            ref.read(historialTodayOnlyProvider.notifier).state = false;
+          }
+          ref.read(shellTabProvider.notifier).state = i;
+        },
       ),
     );
   }

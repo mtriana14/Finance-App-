@@ -72,26 +72,37 @@ class _GreetingBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return SizedBox(
-      height: Sizes.tapTarget,
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Hola, $name',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppText.heading(color: c.textPrimary),
-                ),
-                Text(Dates.greetingDate(date), style: AppText.bodySmall(color: c.textSecondary)),
-              ],
+    // 48dp is the floor the spec asks for, not a ceiling: two lines of text at
+    // a merchant's chosen font scale are routinely taller than that, and a
+    // fixed height clips them.
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: Sizes.tapTarget),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: Gap.tight),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Hola, $name',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppText.heading(color: c.textPrimary),
+                  ),
+                  Text(
+                    Dates.greetingDate(date),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppText.bodySmall(color: c.textSecondary),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

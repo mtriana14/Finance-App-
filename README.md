@@ -75,6 +75,12 @@ the dashboard needs to ignore it; both read the same rows. `qrSale` and
 `cardSale` have no producer in v1 — the schema is ready for the Phase 2 Deuna
 and PayPhone sync without a migration.
 
+Historial pages by **day**, not by row. A merchant with three years of trading
+has tens of thousands of entries and none of the off-screen ones belong in
+memory; paging by row instead would cut a day in half at the page boundary and
+print a section total for a day it had only partly loaded. Filters and date
+ranges are applied in SQL, so they narrow the days as well as the rows.
+
 All the arithmetic lives in pure functions over plain models, so the spec's
 integrity checklists are directly testable without a database.
 
@@ -92,14 +98,16 @@ running the generator first.
 
 ## Tests
 
-42 tests, all passing:
+50 tests, all passing:
 
 - `test/ledger_math_test.dart` — the business rules, including the worked day
   from spec Screen 08 reconciling to `$127.50` against the Screen 03 breakdown.
 - `test/ledger_repository_test.dart` — real SQLite: day-close replacement,
-  fiado round trips, the 24-hour correction window, cascade deletes.
+  fiado round trips, the 24-hour correction window, cascade deletes, and
+  Historial paging including the boundary day arriving whole.
 - `test/widget_test.dart` — the real screens against an in-memory database,
-  including a 360x640 layout pass over every tab.
+  including layout passes over every tab at 360x640 and at the largest font
+  scale the app honours.
 
 ## Where this departs from the spec
 

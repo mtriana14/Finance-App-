@@ -167,4 +167,129 @@ void main() {
       expect(first, DateTime(old.year, old.month, old.day));
     });
   });
+
+  group('Historial paging', () {
+    /// Seeds [days] consecutive days ending today, one cash sale each.
+    Future<void> seedDays(int days) async {
+      final today = DateTime.now();
+      for (var i = 0; i < days; i++) {
+        await ledger.addSale(
+          kind: LedgerKind.cashSale,
+          amountCents: 100 * (i + 1),
+          occurredAt: today.subtract(Duration(days: i)),
+        );
+      }
+    }
+
+    test('returns only the requested number of days and reports more', () async {
+      await seedDays(20);
+
+      final page = await ledger.watchHistorial(dayLimit: 12).first;
+      final days = LedgerMath.groupByDay(page.entries);
+
+      expect(days.length, 12);
+      expect(page.hasMoreDays, isTrue);
+      // Newest first.
+      expect(days.first.day.day, DateTime.now().day);
+    });
+
+    test('reports no more days once the whole ledger fits', () async {
+      await seedDays(5);
+      final page = await ledger.watchHistorial(dayLimit: 12).first;
+      expect(LedgerMath.groupByDay(page.entries).length, 5);
+      expect(page.hasMoreDays, isFalse);
+    });
+
+    test('a day at the page boundary comes back whole, so its total is right',
+        () async {
+      final today = DateTime.now();
+      final yesterday = today.subtract(const Duration(days: 1));
+      // Yesterday has three sales; it is the last day of a one-day page.
+      for (final cents in [1000, 2000, 3000]) {
+        await ledger.addSale(
+          kind: LedgerKind.cashSale,
+          amountCents: cents,
+          occurredAt: yesterday,
+        );
+      }
+      await ledger.addSale(
+        kind: LedgerKind.cashSale,
+        amountCents: 500,
+        occurredAt: today,
+      );
+
+      // Two days requested: yesterday must arrive complete, not cut off at
+      // some row limit, or its section total would understate the day.
+      final page = await ledger.watchHistorial(dayLimit: 2).first;
+      final days = LedgerMath.groupByDay(page.entries);
+      expect(days.length, 2);
+      expect(days.last.entries.length, 3);
+      expect(days.last.totals.totalCents, 6000);
+      expect(days.first.totals.totalCents, 500);
+    });
+
+    test('filtering by channel narrows the days as well as the rows', () async {
+      final today = DateTime.now();
+      final yesterday = today.subtract(const Duration(days: 1));
+      await ledger.addSale(
+          kind: LedgerKind.cashSale, amountCents: 1000, occurredAt: yesterday);
+      await ledger.addSale(kind: LedgerKind.qrSale, amountCents: 2500, occurredAt: today);
+
+      final qrOnly =
+          await ledger.watchHistorial(kinds: {LedgerKind.qrSale}).first;
+      final days = LedgerMath.groupByDay(qrOnly.entries);
+
+      // Yesterday had no QR sale, so it is not a day in this view at all.
+      expect(days.length, 1);
+      expect(days.single.totals.totalCents, 2500);
+    });
+
+    test('the fiado filter covers credit given and credit collected', () async {
+      final c = await customers.create(name: 'Ana Vera');
+      await ledger.addFiado(customerId: c.id, amountCents: 4000);
+      await ledger.addFiadoPayment(customerId: c.id, amountCents: 1500);
+      await ledger.addSale(kind: LedgerKind.cashSale, amountCents: 900);
+
+      final page = await ledger.watchHistorial(
+        kinds: {LedgerKind.fiadoIssued, LedgerKind.fiadoPayment},
+      ).first;
+
+      expect(page.entries.length, 2);
+      final totals = LedgerMath.totals(page.entries);
+      // Only the payment is income; the fiado issued is listed, not counted.
+      expect(totals.totalCents, 1500);
+      expect(totals.fiadoIssuedCents, 4000);
+    });
+
+    test('a date range limits the days returned', () async {
+      await seedDays(10);
+      final today = DateTime.now();
+      final page = await ledger
+          .watchHistorial(
+            from: today.subtract(const Duration(days: 3)),
+            to: today.subtract(const Duration(days: 1)),
+          )
+          .first;
+
+      expect(LedgerMath.groupByDay(page.entries).length, 3);
+      expect(page.hasMoreDays, isFalse);
+    });
+
+    test('re-emits when a sale is logged', () async {
+      await ledger.addSale(kind: LedgerKind.cashSale, amountCents: 500);
+
+      final totals = <int>[];
+      final sub = ledger
+          .watchHistorial()
+          .listen((p) => totals.add(LedgerMath.totals(p.entries).totalCents));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      await ledger.addSale(kind: LedgerKind.cashSale, amountCents: 250);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await sub.cancel();
+
+      expect(totals.first, 500);
+      expect(totals.last, 750);
+    });
+  });
 }

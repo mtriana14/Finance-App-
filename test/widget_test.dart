@@ -188,12 +188,27 @@ void main() {
   testWidgets('every tab lays out on a 360x640 screen without overflowing',
       (tester) async {
     // A 5-inch 720p phone, the floor the spec targets. A RenderFlex overflow
-    // throws in debug, so rendering each tab is itself the assertion.
+    // throws in debug, so rendering each tab is itself the assertion — checked
+    // after every tab, since one pending exception at the end hides the rest.
     await withApp(tester, size: const Size(360, 640), () async {
       for (final tab in ['Libreta', 'Historial', 'Perfil', 'Inicio']) {
         await tapText(tester, tab);
+        expect(tester.takeException(), isNull, reason: 'overflow on the $tab tab');
       }
-      expect(tester.takeException(), isNull);
+    });
+  });
+
+  testWidgets('the app survives the largest font scale it honours', (tester) async {
+    // Merchants set big system fonts. The app clamps the scale at 1.3; nothing
+    // may clip at that ceiling on the smallest screen.
+    tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    await withApp(tester, size: const Size(360, 640), () async {
+      for (final tab in ['Libreta', 'Historial', 'Perfil', 'Inicio']) {
+        await tapText(tester, tab);
+        expect(tester.takeException(), isNull, reason: 'overflow on the $tab tab');
+      }
     });
   });
 }

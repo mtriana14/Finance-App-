@@ -29,13 +29,14 @@ extension on HistorialFilter {
         HistorialFilter.fiado => 'Fiado',
       };
 
-  bool matches(LedgerEntry e) => switch (this) {
-        HistorialFilter.todos => true,
-        HistorialFilter.efectivo => e.kind == LedgerKind.cashSale,
-        HistorialFilter.qr => e.kind == LedgerKind.qrSale,
-        HistorialFilter.tarjeta => e.kind == LedgerKind.cardSale,
-        // "Fiado" covers both directions: credit given and credit collected.
-        HistorialFilter.fiado => e.kind.isFiado,
+  /// Null means every channel. "Fiado" deliberately covers both directions:
+  /// credit given and credit collected.
+  Set<LedgerKind>? get kinds => switch (this) {
+        HistorialFilter.todos => null,
+        HistorialFilter.efectivo => {LedgerKind.cashSale},
+        HistorialFilter.qr => {LedgerKind.qrSale},
+        HistorialFilter.tarjeta => {LedgerKind.cardSale},
+        HistorialFilter.fiado => {LedgerKind.fiadoIssued, LedgerKind.fiadoPayment},
       };
 }
 
@@ -54,36 +55,34 @@ class _HistorialScreenState extends ConsumerState<HistorialScreen> {
   HistorialFilter _filter = HistorialFilter.todos;
   DateTimeRange? _range;
 
-  /// Rendered a chunk at a time so ten thousand transactions still scroll.
-  static const _pageSize = 50;
-  int _visibleDays = 12;
+  /// Entries rendered per day before the rest are summarised.
+  static const _rowsPerDay = 50;
+
+  /// How many days deep the list is loaded. Grows on "Ver más días"; the
+  /// database only ever returns this many days.
+  static const _dayStep = 12;
+  int _visibleDays = _dayStep;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final all = ref.watch(allEntriesProvider).value ?? const <LedgerEntry>[];
 
     // A tap on the dashboard's sales card lands here scoped to today.
     final todayOnly = ref.watch(historialTodayOnlyProvider);
     final today = ref.watch(todayProvider).value ?? DateTime.now();
-    final effectiveRange = todayOnly
-        ? DateTimeRange(start: today, end: today)
-        : _range;
+    final effectiveRange =
+        todayOnly ? DateTimeRange(start: today, end: today) : _range;
 
-    final filtered = all.where((e) {
-      if (!_filter.matches(e)) return false;
-      if (effectiveRange != null) {
-        final day = Dates.businessDay(e.occurredAt);
-        if (day < Dates.businessDay(effectiveRange.start) ||
-            day > Dates.businessDay(effectiveRange.end)) {
-          return false;
-        }
-      }
-      return true;
-    }).toList();
+    final page = ref.watch(historialProvider(HistorialQuery(
+          kinds: _filter.kinds,
+          from: effectiveRange?.start,
+          to: effectiveRange?.end,
+          dayLimit: _visibleDays,
+        )));
+    final entries = page.value?.entries ?? const <LedgerEntry>[];
+    final hasMoreDays = page.value?.hasMoreDays ?? false;
 
-    final days = LedgerMath.groupByDay(filtered);
-    final shownDays = days.take(_visibleDays).toList();
+    final shownDays = LedgerMath.groupByDay(entries);
 
     return Scaffold(
       backgroundColor: c.background,
@@ -96,7 +95,7 @@ class _HistorialScreenState extends ConsumerState<HistorialScreen> {
             color: effectiveRange != null ? c.primary : null,
             onPressed: () => _pickRange(context, todayOnly),
           ),
-          _ExportMenu(entries: filtered),
+          _ExportMenu(kinds: _filter.kinds, range: effectiveRange),
           const SizedBox(width: Gap.micro),
         ],
       ),
@@ -106,7 +105,7 @@ class _HistorialScreenState extends ConsumerState<HistorialScreen> {
             active: _filter,
             onChanged: (f) => setState(() {
               _filter = f;
-              _visibleDays = 12;
+              _visibleDays = _dayStep;
             }),
           ),
           if (effectiveRange != null)
@@ -118,12 +117,16 @@ class _HistorialScreenState extends ConsumerState<HistorialScreen> {
               },
             ),
           Expanded(
-            child: days.isEmpty
-                ? _EmptyHistorial(filtered: _filter != HistorialFilter.todos || effectiveRange != null)
+            child: shownDays.isEmpty
+                ? (page.isLoading
+                    ? const SizedBox.shrink()
+                    : _EmptyHistorial(
+                        filtered:
+                            _filter != HistorialFilter.todos || effectiveRange != null))
                 : ListView.builder(
                     padding: const EdgeInsets.fromLTRB(
                         Gap.standard, Gap.tight, Gap.standard, Gap.major),
-                    itemCount: shownDays.length + (shownDays.length < days.length ? 1 : 0),
+                    itemCount: shownDays.length + (hasMoreDays ? 1 : 0),
                     itemBuilder: (context, index) {
                       if (index >= shownDays.length) {
                         return Padding(
@@ -131,15 +134,15 @@ class _HistorialScreenState extends ConsumerState<HistorialScreen> {
                           child: AppButton(
                             label: 'Ver más días',
                             style: AppButtonStyle.outline,
-                            onPressed: () => setState(() => _visibleDays += 12),
+                            onPressed: () => setState(() => _visibleDays += _dayStep),
                           ),
                         );
                       }
                       final day = shownDays[index];
                       return _DaySection(
                         day: day.day,
-                        entries: day.entries.take(_pageSize).toList(),
-                        hiddenCount: day.entries.length - day.entries.take(_pageSize).length,
+                        entries: day.entries.take(_rowsPerDay).toList(),
+                        hiddenCount: day.entries.length - _rowsPerDay,
                         totalCents: day.totals.totalCents,
                       );
                     },
@@ -167,7 +170,7 @@ class _HistorialScreenState extends ConsumerState<HistorialScreen> {
     }
     setState(() {
       _range = picked;
-      _visibleDays = 12;
+      _visibleDays = _dayStep;
     });
   }
 }
@@ -444,19 +447,37 @@ class _SourceBadge extends StatelessWidget {
   }
 }
 
-class _ExportMenu extends StatelessWidget {
-  const _ExportMenu({required this.entries});
+/// Export covers everything matching the current filter, not just the days
+/// scrolled into view — and it reads the ledger on demand rather than holding
+/// a standing subscription to all of it.
+class _ExportMenu extends ConsumerWidget {
+  const _ExportMenu({required this.kinds, required this.range});
 
-  final List<LedgerEntry> entries;
+  final Set<LedgerKind>? kinds;
+  final DateTimeRange? range;
+
+  bool _matches(LedgerEntry e) {
+    if (kinds != null && !kinds!.contains(e.kind)) return false;
+    if (range != null) {
+      final day = Dates.businessDay(e.occurredAt);
+      if (day < Dates.businessDay(range!.start) || day > Dates.businessDay(range!.end)) {
+        return false;
+      }
+    }
+    return true;
+  }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final c = context.colors;
     return PopupMenuButton<String>(
       tooltip: 'Exportar',
       color: c.surface,
       icon: AppIcon(AppIcons.share, size: 22, color: c.textPrimary),
       onSelected: (value) async {
+        final all = await ref.read(ledgerRepositoryProvider).exportAll();
+        final entries = all.where(_matches).toList();
+        if (!context.mounted) return;
         if (entries.isEmpty) {
           showSnack(context, 'No hay movimientos para exportar');
           return;

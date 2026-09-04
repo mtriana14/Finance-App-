@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:drift/drift.dart';
 
 import '../../core/format/dates.dart';
@@ -54,10 +56,6 @@ class LedgerRepository {
     return _watchJoined((t) => t.businessDay.isBetweenValues(a, b));
   }
 
-  /// Everything, newest first. Historial pages through this in the UI; the
-  /// index on `(business_day, occurred_at)` keeps it cheap.
-  Stream<List<LedgerEntry>> watchAll() => _watchJoined((t) => const Constant(true));
-
   Stream<List<LedgerEntry>> watchAllFiado() => _watchJoined(
         (t) => t.kind.isInValues([LedgerKind.fiadoIssued, LedgerKind.fiadoPayment]),
       );
@@ -113,6 +111,116 @@ class LedgerRepository {
       ..where((t) => t.kind.equalsValue(LedgerKind.fiadoPayment) & t.createdAt.isBiggerThanValue(since))
       ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]);
     return [for (final row in await query.get()) row.toDomain()];
+  }
+
+  // ---------------------------------------------------------------------------
+  // Historial paging
+  // ---------------------------------------------------------------------------
+
+  /// A page of Historial: complete days, newest first.
+  ///
+  /// Paging by *day* rather than by row is what keeps the daily totals honest.
+  /// A row-based page would cut some day in half at the boundary and print a
+  /// section total for a day it had only partly loaded.
+  /// The subscription is managed explicitly rather than written as an `async*`
+  /// generator: a generator suspended in `await for` over the never-ending
+  /// change feed cannot be cancelled, so every filter change would strand a
+  /// listener on the database.
+  Stream<HistorialPage> watchHistorial({
+    Set<LedgerKind>? kinds,
+    DateTime? from,
+    DateTime? to,
+    int dayLimit = 12,
+  }) {
+    final controller = StreamController<HistorialPage>();
+    StreamSubscription<void>? changes;
+    var cancelled = false;
+
+    Future<void> emit() async {
+      if (cancelled) return;
+      final page =
+          await _loadHistorial(kinds: kinds, from: from, to: to, dayLimit: dayLimit);
+      // The read is asynchronous, so re-check: the listener may have gone away
+      // while SQLite was working.
+      if (!cancelled && !controller.isClosed) controller.add(page);
+    }
+
+    controller.onListen = () {
+      // Re-read when either table the page draws from changes — the ledger for
+      // the rows, customers because a fiado row carries their name.
+      changes = _db
+          .tableUpdates(TableUpdateQuery.allOf([
+            TableUpdateQuery.onTable(_db.ledgerEntries),
+            TableUpdateQuery.onTable(_db.customers),
+          ]))
+          .listen((_) => emit());
+      emit();
+    };
+    controller.onCancel = () async {
+      cancelled = true;
+      await changes?.cancel();
+    };
+
+    return controller.stream;
+  }
+
+  Expression<bool>? _historialFilter({
+    required Set<LedgerKind>? kinds,
+    required DateTime? from,
+    required DateTime? to,
+  }) {
+    final terms = <Expression<bool>>[
+      if (kinds != null && kinds.isNotEmpty)
+        _db.ledgerEntries.kind.isInValues(kinds.toList()),
+      if (from != null) _db.ledgerEntries.businessDay.isBiggerOrEqualValue(Dates.businessDay(from)),
+      if (to != null) _db.ledgerEntries.businessDay.isSmallerOrEqualValue(Dates.businessDay(to)),
+    ];
+    if (terms.isEmpty) return null;
+    return terms.reduce((a, b) => a & b);
+  }
+
+  Future<HistorialPage> _loadHistorial({
+    required Set<LedgerKind>? kinds,
+    required DateTime? from,
+    required DateTime? to,
+    required int dayLimit,
+  }) async {
+    final filter = _historialFilter(kinds: kinds, from: from, to: to);
+    final dayColumn = _db.ledgerEntries.businessDay;
+
+    // One extra day is fetched purely to answer "is there more?".
+    final dayQuery = _db.selectOnly(_db.ledgerEntries, distinct: true)
+      ..addColumns([dayColumn])
+      ..orderBy([OrderingTerm.desc(dayColumn)])
+      ..limit(dayLimit + 1);
+    if (filter != null) dayQuery.where(filter);
+
+    final dayRows = await dayQuery.get();
+    final allDays = [for (final row in dayRows) row.read(dayColumn)!];
+    final days = allDays.take(dayLimit).toList();
+    if (days.isEmpty) return const HistorialPage(entries: [], hasMoreDays: false);
+
+    final entryQuery = _db.select(_db.ledgerEntries).join([
+      leftOuterJoin(_db.customers, _db.customers.id.equalsExp(_db.ledgerEntries.customerId)),
+    ])
+      ..where(filter == null
+          ? dayColumn.isIn(days)
+          : dayColumn.isIn(days) & filter)
+      ..orderBy([
+        OrderingTerm.desc(_db.ledgerEntries.occurredAt),
+        OrderingTerm.desc(_db.ledgerEntries.id),
+      ]);
+
+    final rows = await entryQuery.get();
+    return HistorialPage(
+      entries: [
+        for (final row in rows)
+          row.readTable(_db.ledgerEntries).toDomain(
+                customerName: row.readTableOrNull(_db.customers)?.name,
+              ),
+      ],
+      hasMoreDays: allDays.length > dayLimit,
+    );
   }
 
   /// Full dump for CSV export, oldest first so the file reads like a ledger.
@@ -235,4 +343,14 @@ class LedgerRepository {
     if (t == null || t.isEmpty) return null;
     return t.length <= 80 ? t : t.substring(0, 80);
   }
+}
+
+/// A day-bounded slice of the ledger, plus whether older days remain.
+class HistorialPage {
+  const HistorialPage({required this.entries, required this.hasMoreDays});
+
+  final List<LedgerEntry> entries;
+  final bool hasMoreDays;
+
+  static const empty = HistorialPage(entries: [], hasMoreDays: false);
 }

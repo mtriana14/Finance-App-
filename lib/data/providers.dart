@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/models/customer.dart';
@@ -81,8 +82,52 @@ final weekEntriesProvider = StreamProvider<List<LedgerEntry>>((ref) {
   return ref.watch(ledgerRepositoryProvider).watchRange(day.subtract(const Duration(days: 6)), day);
 });
 
-final allEntriesProvider =
-    StreamProvider<List<LedgerEntry>>((ref) => ref.watch(ledgerRepositoryProvider).watchAll());
+/// What Historial is currently showing. Used as a provider key, so it needs
+/// value equality.
+@immutable
+class HistorialQuery {
+  const HistorialQuery({this.kinds, this.from, this.to, this.dayLimit = 12});
+
+  /// Null or empty means every channel.
+  final Set<LedgerKind>? kinds;
+  final DateTime? from;
+  final DateTime? to;
+
+  /// How many days deep the list is scrolled. Grows on "Ver más días".
+  final int dayLimit;
+
+  @override
+  bool operator ==(Object other) =>
+      other is HistorialQuery &&
+      setEquals(kinds, other.kinds) &&
+      from == other.from &&
+      to == other.to &&
+      dayLimit == other.dayLimit;
+
+  @override
+  int get hashCode => Object.hash(
+        kinds == null ? null : Object.hashAllUnordered(kinds!),
+        from,
+        to,
+        dayLimit,
+      );
+}
+
+/// Historial reads a bounded window rather than the whole ledger: a merchant
+/// with three years of daily sales has tens of thousands of rows, and none of
+/// the ones off screen need to be in memory.
+///
+/// autoDispose so changing a filter releases the previous query's subscription.
+final historialProvider =
+    StreamProvider.autoDispose.family<HistorialPage, HistorialQuery>((ref, query) {
+  return ref.watch(ledgerRepositoryProvider).watchHistorial(
+        kinds: query.kinds,
+        from: query.from,
+        to: query.to,
+        dayLimit: query.dayLimit,
+      );
+});
+
 
 final fiadoEntriesProvider =
     StreamProvider<List<LedgerEntry>>((ref) => ref.watch(ledgerRepositoryProvider).watchAllFiado());
