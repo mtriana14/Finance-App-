@@ -98,16 +98,47 @@ running the generator first.
 
 ## Tests
 
-50 tests, all passing:
+64 tests, all passing:
 
 - `test/ledger_math_test.dart` — the business rules, including the worked day
   from spec Screen 08 reconciling to `$127.50` against the Screen 03 breakdown.
 - `test/ledger_repository_test.dart` — real SQLite: day-close replacement,
   fiado round trips, the 24-hour correction window, cascade deletes, and
   Historial paging including the boundary day arriving whole.
-- `test/widget_test.dart` — the real screens against an in-memory database,
-  including layout passes over every tab at 360x640 and at the largest font
-  scale the app honours.
+- `test/export_test.dart` — CSV structure, formula neutralisation, and the
+  WhatsApp summary reconciling to the same four channels as the dashboard.
+- `test/widget_test.dart` — the real screens against an in-memory database:
+  layout passes over every tab at 360x640 and at the largest font scale the app
+  honours, and a forced save failure proving the button recovers.
+
+## Security posture
+
+v1 holds names, phone numbers and outstanding debts for people who are not
+users of this app and never agreed to anything. Three decisions follow from
+that:
+
+- **Backup and device transfer are both off** (`android:allowBackup="false"`
+  plus `res/xml/data_extraction_rules.xml`). Android's default would have
+  copied the unencrypted database to the merchant's Google Drive. On Android
+  12+ disabling cloud backup alone does not stop device-to-device transfer, so
+  both channels are closed explicitly.
+- **No permissions are declared.** v1 never touches the network; `INTERNET`
+  appears only in the debug and profile manifests, where the Flutter tooling
+  needs it.
+- **Exports are treated as copies of the whole ledger**, because they are.
+  They live in one directory that is emptied before each write, so at most one
+  exists, and "borrar todos mis datos" erases it along with the database.
+  Every CSV field is pinned to text so a customer name like
+  `=HYPERLINK(...)` cannot evaluate when the merchant shares the file.
+
+Not yet done, and needed before this outgrows the pilot: the database is
+unencrypted on disk. The spec allows that for ten known devices and says not to
+ship past the pilot without SQLCipher. That still stands.
+
+Screenshots are deliberately *not* blocked. It would be conventional for a
+finance app, but the product's own design has the merchant sharing a summary
+over WhatsApp, and blocking that would break the feature to protect data the
+merchant is choosing to send.
 
 ## Where this departs from the spec
 

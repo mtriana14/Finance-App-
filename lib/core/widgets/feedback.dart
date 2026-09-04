@@ -10,20 +10,44 @@ import 'app_icon.dart';
 /// Confirmation of a save without looking at the screen: a short vibration
 /// plus a snackbar that never blocks navigation.
 void showSavedSnack(BuildContext context, String message) {
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  if (messenger == null) return;
+  showSavedSnackOn(messenger, message, colors: context.colors);
+}
+
+/// The same confirmation, addressed to a messenger captured earlier.
+///
+/// A save usually pops its route, and a popped route's context can no longer
+/// find the messenger. Capturing it before navigating is what keeps the
+/// confirmation from being silently dropped.
+void showSavedSnackOn(
+  ScaffoldMessengerState messenger,
+  String message, {
+  AppColors? colors,
+}) {
   HapticFeedback.mediumImpact();
-  showSnack(context, message);
+  _show(messenger, message, colors: colors);
 }
 
 void showSnack(BuildContext context, String message, {bool danger = false}) {
   final messenger = ScaffoldMessenger.maybeOf(context);
   if (messenger == null) return;
-  final c = context.colors;
+  _show(messenger, message, danger: danger, colors: context.colors);
+}
+
+void _show(
+  ScaffoldMessengerState messenger,
+  String message, {
+  bool danger = false,
+  AppColors? colors,
+}) {
+  final palette = colors ?? AppColors.light;
   messenger
     ..hideCurrentSnackBar()
     ..showSnackBar(
       SnackBar(
         content: Text(message, style: AppText.bodySmallMedium(color: Colors.white)),
-        backgroundColor: danger ? c.danger : c.textPrimary,
+        backgroundColor: danger ? palette.danger : palette.textPrimary,
         duration: const Duration(seconds: 3),
         margin: const EdgeInsets.all(Gap.standard),
       ),

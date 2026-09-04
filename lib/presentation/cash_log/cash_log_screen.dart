@@ -11,6 +11,7 @@ import '../../core/widgets/app_card.dart';
 import '../../core/widgets/app_icon.dart';
 import '../../core/widgets/feedback.dart';
 import '../../core/widgets/money_text.dart';
+import '../../core/widgets/submit_guard.dart';
 import '../../data/providers.dart';
 import '../../data/repositories/settings_repository.dart';
 import '../../domain/models/ledger_kind.dart';
@@ -28,11 +29,11 @@ class CashLogScreen extends ConsumerStatefulWidget {
   ConsumerState<CashLogScreen> createState() => _CashLogScreenState();
 }
 
-class _CashLogScreenState extends ConsumerState<CashLogScreen> {
+class _CashLogScreenState extends ConsumerState<CashLogScreen>
+    with SubmitGuard<CashLogScreen> {
   final _noteController = TextEditingController();
   int _cents = 0;
   bool _closeoutMode = false;
-  bool _saving = false;
 
   @override
   void dispose() {
@@ -71,7 +72,7 @@ class _CashLogScreenState extends ConsumerState<CashLogScreen> {
                 : _IndividualMode(
                     cents: _cents,
                     noteController: _noteController,
-                    saving: _saving,
+                    saving: submitting,
                     onChanged: (value) => setState(() => _cents = value),
                     onSave: _save,
                   ),
@@ -82,7 +83,7 @@ class _CashLogScreenState extends ConsumerState<CashLogScreen> {
   }
 
   Future<void> _save() async {
-    if (_cents <= 0 || _saving) return;
+    if (_cents <= 0 || submitting) return;
     final ledger = ref.read(ledgerRepositoryProvider);
     final now = DateTime.now();
 
@@ -91,13 +92,13 @@ class _CashLogScreenState extends ConsumerState<CashLogScreen> {
     // money again as a plain cash sale, ask before saving rather than quietly
     // inflating the day.
     final recent = await ledger.recentFiadoPayments(now: now);
+    if (!mounted) return;
     final clash = LedgerMath.matchingRecentFiadoPayment(
       recentPayments: recent,
       amountCents: _cents,
       now: now,
     );
     if (clash != null) {
-      if (!mounted) return;
       final proceed = await confirmSheet(
         context,
         title: '¿Ya registraste esto como pago de fiado?',
@@ -108,21 +109,28 @@ class _CashLogScreenState extends ConsumerState<CashLogScreen> {
         cancelLabel: 'Ya lo registré',
         icon: AppIcons.alert,
       );
+      if (!mounted) return;
       if (!proceed) {
-        if (mounted) Navigator.of(context).pop();
+        Navigator.of(context).pop();
         return;
       }
     }
 
-    setState(() => _saving = true);
-    await ledger.addSale(
-      kind: LedgerKind.cashSale,
-      amountCents: _cents,
-      note: _noteController.text,
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+
+    final saved = await submit(
+      () => ledger.addSale(
+        kind: LedgerKind.cashSale,
+        amountCents: _cents,
+        note: _noteController.text,
+      ),
+      failureMessage: 'No se pudo guardar la venta. Intenta de nuevo.',
     );
-    if (!mounted) return;
-    Navigator.of(context).pop();
-    showSavedSnack(context, 'Venta guardada');
+    if (!saved) return;
+
+    navigator.pop();
+    showSavedSnackOn(messenger, 'Venta guardada');
   }
 }
 
@@ -279,9 +287,9 @@ class _CloseoutMode extends ConsumerStatefulWidget {
   ConsumerState<_CloseoutMode> createState() => _CloseoutModeState();
 }
 
-class _CloseoutModeState extends ConsumerState<_CloseoutMode> {
+class _CloseoutModeState extends ConsumerState<_CloseoutMode>
+    with SubmitGuard<_CloseoutMode> {
   int _drawerCents = 0;
-  bool _saving = false;
 
   @override
   Widget build(BuildContext context) {
@@ -353,7 +361,7 @@ class _CloseoutModeState extends ConsumerState<_CloseoutMode> {
             child: AppButton(
               label: 'Guardar cierre',
               large: true,
-              onPressed: _drawerCents > 0 && !_saving ? _save : null,
+              onPressed: _drawerCents > 0 && !submitting ? _save : null,
             ),
           ),
         ),
@@ -376,17 +384,22 @@ class _CloseoutModeState extends ConsumerState<_CloseoutMode> {
         confirmLabel: 'Guardar cierre',
         icon: AppIcons.alert,
       );
-      if (!ok) return;
+      if (!ok || !mounted) return;
     }
 
-    setState(() => _saving = true);
-    await ref.read(ledgerRepositoryProvider).saveCloseout(
-          day: DateTime.now(),
-          drawerCents: _drawerCents,
-          floatCents: floatCents,
-        );
-    if (!mounted) return;
-    showSavedSnack(context, 'Cierre guardado');
+    final messenger = ScaffoldMessenger.of(context);
+
+    final saved = await submit(
+      () => ref.read(ledgerRepositoryProvider).saveCloseout(
+            day: DateTime.now(),
+            drawerCents: _drawerCents,
+            floatCents: floatCents,
+          ),
+      failureMessage: 'No se pudo guardar el cierre. Intenta de nuevo.',
+    );
+    if (!saved) return;
+
+    showSavedSnackOn(messenger, 'Cierre guardado');
     widget.onSaved();
   }
 }

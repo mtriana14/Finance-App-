@@ -1,8 +1,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!--
+      No permissions are declared. v1 does not use the network at all: the
+      INTERNET permission appears only in the debug and profile manifests,
+      where the Flutter tooling needs it to attach.
+    -->
     <application
         android:label="Libreta"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules">
         <activity
             android:name=".MainActivity"
             android:exported="true"

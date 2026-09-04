@@ -488,7 +488,13 @@ class _ExportMenu extends ConsumerWidget {
           } else {
             await LedgerExport.shareSummary(entries, title: 'Resumen de ventas');
           }
-        } catch (_) {
+        } catch (error, stack) {
+          FlutterError.reportError(FlutterErrorDetails(
+            exception: error,
+            stack: stack,
+            library: 'libreta',
+            context: ErrorDescription('sharing historial as $value'),
+          ));
           if (context.mounted) {
             showSnack(context, 'No se pudo compartir el archivo', danger: true);
           }

@@ -11,6 +11,7 @@ import '../../core/widgets/app_icon.dart';
 import '../../core/widgets/avatar_circle.dart';
 import '../../core/widgets/feedback.dart';
 import '../../core/widgets/money_text.dart';
+import '../../core/widgets/submit_guard.dart';
 import '../../data/providers.dart';
 import '../../domain/models/customer.dart';
 import '../../domain/services/ledger_math.dart';
@@ -35,11 +36,11 @@ class NewFiadoScreen extends ConsumerStatefulWidget {
   ConsumerState<NewFiadoScreen> createState() => _NewFiadoScreenState();
 }
 
-class _NewFiadoScreenState extends ConsumerState<NewFiadoScreen> {
+class _NewFiadoScreenState extends ConsumerState<NewFiadoScreen>
+    with SubmitGuard<NewFiadoScreen> {
   late Customer? _customer = widget.preselected;
   final _noteController = TextEditingController();
   int _cents = 0;
-  bool _saving = false;
 
   bool get _hasInput => _customer != null || _cents > 0 || _noteController.text.isNotEmpty;
 
@@ -78,16 +79,25 @@ class _NewFiadoScreenState extends ConsumerState<NewFiadoScreen> {
 
   Future<void> _save() async {
     final customer = _customer;
-    if (customer == null || _cents <= 0 || _saving) return;
-    setState(() => _saving = true);
-    await ref.read(ledgerRepositoryProvider).addFiado(
-          customerId: customer.id,
-          amountCents: _cents,
-          note: _noteController.text,
-        );
-    if (!mounted) return;
-    Navigator.of(context).pop();
-    showSavedSnack(context, 'Fiado registrado');
+    if (customer == null || _cents <= 0) return;
+
+    // Captured before the route is popped, so the confirmation still has a
+    // messenger to land on.
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+
+    final saved = await submit(
+      () => ref.read(ledgerRepositoryProvider).addFiado(
+            customerId: customer.id,
+            amountCents: _cents,
+            note: _noteController.text,
+          ),
+      failureMessage: 'No se pudo guardar el fiado. Intenta de nuevo.',
+    );
+    if (!saved) return;
+
+    navigator.pop();
+    showSavedSnackOn(messenger, 'Fiado registrado');
   }
 
   @override
@@ -113,7 +123,7 @@ class _NewFiadoScreenState extends ConsumerState<NewFiadoScreen> {
               customer: _customer!,
               cents: _cents,
               noteController: _noteController,
-              saving: _saving,
+              saving: submitting,
               onChanged: (value) => setState(() => _cents = value),
               onSave: _save,
             ),

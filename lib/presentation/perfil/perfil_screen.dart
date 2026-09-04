@@ -159,7 +159,13 @@ class PerfilScreen extends ConsumerWidget {
     }
     try {
       await LedgerExport.shareCsv(entries, name: 'mis-datos');
-    } catch (_) {
+    } catch (error, stack) {
+      FlutterError.reportError(FlutterErrorDetails(
+        exception: error,
+        stack: stack,
+        library: 'libreta',
+        context: ErrorDescription('exporting all data'),
+      ));
       if (context.mounted) {
         showSnack(context, 'No se pudo crear el archivo', danger: true);
       }
@@ -185,6 +191,9 @@ class PerfilScreen extends ConsumerWidget {
     await ref.read(ledgerRepositoryProvider).deleteAll();
     await ref.read(customerRepositoryProvider).deleteAll();
     await ref.read(settingsRepositoryProvider).deleteAll();
+    // A previously shared CSV is a full plaintext copy of what was just
+    // deleted; erasing the database without it would not be erasing the data.
+    await LedgerExport.clearCache();
     if (context.mounted) showSnack(context, 'Datos borrados');
   }
 

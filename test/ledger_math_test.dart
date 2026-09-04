@@ -297,17 +297,68 @@ void main() {
     test('uses a decimal point and groups thousands', () {
       expect(Money.format(12750), r'$127.50');
       expect(Money.format(0), r'$0.00');
+      expect(Money.format(5), r'$0.05');
       expect(Money.format(123456789), r'$1,234,567.89');
       expect(Money.format(-500), r'-$5.00');
+      expect(Money.signed(500), r'+$5.00');
+      expect(Money.signed(-500), r'-$5.00');
+      expect(Money.bare(12750), '127.50');
+    });
+
+    test('stays exact at magnitudes where a double would drift', () {
+      // Rendering via cents/100 puts money through binary floating point.
+      // These are the cases that would start losing pennies if it did.
+      expect(Money.format(Money.maxParsableCents), r'$999,999,999.99');
+      expect(Money.format(90071992547409911), r'$900,719,925,474,099.11');
+      expect(Money.bare(999999999999999999), '9,999,999,999,999,999.99');
     });
 
     test('parses what a merchant might actually type', () {
       expect(Money.parse('2.50'), 250);
       expect(Money.parse('2,50'), 250);
+      expect(Money.parse('2.5'), 250);
       expect(Money.parse(r'$12'), 1200);
+      expect(Money.parse('12'), 1200);
+      expect(Money.parse('.75'), 75);
+      expect(Money.parse('  7.25  '), 725);
+      expect(Money.parse('-5'), -500);
+    });
+
+    test('reads a three-digit group as thousands, not as decimals', () {
+      // The one genuinely ambiguous shape. A thousands separator is always
+      // followed by exactly three digits; a decimal point on money is not.
+      expect(Money.parse('1,234'), 123400);
+      expect(Money.parse('1.234'), 123400);
       expect(Money.parse('1,234.56'), 123456);
+      expect(Money.parse('1.234,56'), 123456);
+      expect(Money.parse('1,234,567.89'), 123456789);
+    });
+
+    test('rounds a long fraction half-up without going through a double', () {
+      // 2.675 * 100 is 267.49999999999997 in binary floating point, so the
+      // obvious implementation silently loses the cent.
+      expect(Money.parse('2.6750'), 268);
+      expect(Money.parse('8.1550'), 816);
+      expect(Money.parse('0.0050'), 1);
+      expect(Money.parse('0.0049'), 0);
+      // Rounds up into the next dollar rather than producing 100 cents.
+      expect(Money.parse('1.9999'), 200);
+    });
+
+    test('rejects anything that is not a number', () {
       expect(Money.parse('abc'), isNull);
       expect(Money.parse(''), isNull);
+      expect(Money.parse('   '), isNull);
+      expect(Money.parse(r'$'), isNull);
+      expect(Money.parse('...'), isNull);
+      expect(Money.parse('1e9'), isNull);
+      expect(Money.parse('12x'), isNull);
+    });
+
+    test('refuses an amount too large to hold, instead of overflowing', () {
+      expect(Money.parse('999999999.99'), Money.maxParsableCents);
+      expect(Money.parse('1000000000'), isNull);
+      expect(Money.parse('99999999999999999999999'), isNull);
     });
   });
 }

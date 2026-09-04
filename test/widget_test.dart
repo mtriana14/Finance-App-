@@ -8,6 +8,25 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:libreta/app.dart';
 import 'package:libreta/data/db/database.dart';
 import 'package:libreta/data/providers.dart';
+import 'package:libreta/data/repositories/ledger_repository.dart';
+import 'package:libreta/domain/models/ledger_kind.dart';
+
+/// A ledger whose writes always fail, for exercising the save failure path.
+class _FailingLedgerRepository extends LedgerRepository {
+  _FailingLedgerRepository(super.db);
+
+  @override
+  Future<int> addSale({
+    required LedgerKind kind,
+    required int amountCents,
+    String? note,
+    int? customerId,
+    DateTime? occurredAt,
+    EntrySource source = EntrySource.manual,
+  }) async {
+    throw StateError('no space left on device');
+  }
+}
 
 /// Drives the real screens against an in-memory database, so these cover the
 /// wiring between a tap and a total rather than the arithmetic alone.
@@ -17,6 +36,7 @@ Future<void> withApp(
   WidgetTester tester,
   Future<void> Function() body, {
   Size size = const Size(400, 900),
+  List<Override> Function(AppDatabase db)? overrides,
 }) async {
   final db = AppDatabase(NativeDatabase.memory());
   tester.view.devicePixelRatio = 1.0;
@@ -25,7 +45,10 @@ Future<void> withApp(
 
   await tester.pumpWidget(
     ProviderScope(
-      overrides: [databaseProvider.overrideWithValue(db)],
+      overrides: [
+        databaseProvider.overrideWithValue(db),
+        ...?overrides?.call(db),
+      ],
       child: const LibretaApp(),
     ),
   );
@@ -209,6 +232,54 @@ void main() {
         await tapText(tester, tab);
         expect(tester.takeException(), isNull, reason: 'overflow on the $tab tab');
       }
+    });
+  });
+
+  testWidgets('a failed save re-enables the button and says so', (tester) async {
+    // The failure mode this guards against is not the error itself but what
+    // came after it: a busy flag left raised, a dead Guardar button, and
+    // nothing on screen explaining why. A merchant in that state writes the
+    // sale on paper and stops trusting the app.
+    await withApp(
+      tester,
+      overrides: (db) => [
+        ledgerRepositoryProvider.overrideWithValue(_FailingLedgerRepository(db)),
+      ],
+      () async {
+        await tapText(tester, 'Venta');
+        await tapText(tester, r'$5.00');
+        await tapText(tester, 'Guardar');
+
+        // The write threw and was reported rather than swallowed.
+        expect(tester.takeException(), isA<StateError>());
+
+        // The merchant is told, in Spanish, and is still on the screen with
+        // the amount they typed.
+        expect(find.textContaining('No se pudo guardar'), findsOneWidget);
+        expect(find.text('Registrar venta en efectivo'), findsOneWidget);
+        expect(find.text(r'$5.00'), findsWidgets);
+
+        // And the button works again — this is the part that used to stay dead.
+        final button = tester.widget<InkWell>(
+          find.ancestor(of: find.text('Guardar'), matching: find.byType(InkWell)).first,
+        );
+        expect(button.onTap, isNotNull);
+      },
+    );
+  });
+
+  testWidgets('a save that succeeds after a failure still records exactly once',
+      (tester) async {
+    await withApp(tester, () async {
+      await tapText(tester, 'Venta');
+      await tapText(tester, r'$5.00');
+      await tapText(tester, 'Guardar');
+      await tapText(tester, 'Venta');
+      await tapText(tester, r'$5.00');
+      await tapText(tester, 'Guardar');
+
+      // Two deliberate sales, not one sale double-counted.
+      expect(find.text(r'$10.00'), findsNWidgets(2));
     });
   });
 }
