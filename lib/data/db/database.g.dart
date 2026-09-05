@@ -478,6 +478,29 @@ class $LedgerEntriesTable extends LedgerEntries
     ),
     defaultValue: const Constant(false),
   );
+  static const VerificationMeta _voidedAtMeta = const VerificationMeta(
+    'voidedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> voidedAt = GeneratedColumn<DateTime>(
+    'voided_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _voidedReasonMeta = const VerificationMeta(
+    'voidedReason',
+  );
+  @override
+  late final GeneratedColumn<String> voidedReason = GeneratedColumn<String>(
+    'voided_reason',
+    aliasedName,
+    true,
+    additionalChecks: GeneratedColumn.checkTextLength(maxTextLength: 80),
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
     'createdAt',
   );
@@ -501,6 +524,8 @@ class $LedgerEntriesTable extends LedgerEntries
     source,
     isCloseout,
     supersededByCloseout,
+    voidedAt,
+    voidedReason,
     createdAt,
   ];
   @override
@@ -575,6 +600,21 @@ class $LedgerEntriesTable extends LedgerEntries
         ),
       );
     }
+    if (data.containsKey('voided_at')) {
+      context.handle(
+        _voidedAtMeta,
+        voidedAt.isAcceptableOrUnknown(data['voided_at']!, _voidedAtMeta),
+      );
+    }
+    if (data.containsKey('voided_reason')) {
+      context.handle(
+        _voidedReasonMeta,
+        voidedReason.isAcceptableOrUnknown(
+          data['voided_reason']!,
+          _voidedReasonMeta,
+        ),
+      );
+    }
     if (data.containsKey('created_at')) {
       context.handle(
         _createdAtMeta,
@@ -636,6 +676,14 @@ class $LedgerEntriesTable extends LedgerEntries
         DriftSqlType.bool,
         data['${effectivePrefix}superseded_by_closeout'],
       )!,
+      voidedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}voided_at'],
+      ),
+      voidedReason: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}voided_reason'],
+      ),
       createdAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}created_at'],
@@ -679,6 +727,16 @@ class LedgerRow extends DataClass implements Insertable<LedgerRow> {
   /// Set when a day-close replaced this entry. The row is kept for the audit
   /// trail and shown grayed out, but is excluded from every total.
   final bool supersededByCloseout;
+
+  /// When a mistaken entry was voided, and why.
+  ///
+  /// A ledger row is never deleted. The whole reason a merchant trusts this
+  /// over paper is that it settles an argument about who owes what, and a debt
+  /// that can vanish without a trace settles nothing. A void is visible,
+  /// reversible in principle, and carries the merchant's own reason for it;
+  /// a DELETE destroys the evidence that a correction ever happened.
+  final DateTime? voidedAt;
+  final String? voidedReason;
   final DateTime createdAt;
   const LedgerRow({
     required this.id,
@@ -691,6 +749,8 @@ class LedgerRow extends DataClass implements Insertable<LedgerRow> {
     required this.source,
     required this.isCloseout,
     required this.supersededByCloseout,
+    this.voidedAt,
+    this.voidedReason,
     required this.createdAt,
   });
   @override
@@ -718,6 +778,12 @@ class LedgerRow extends DataClass implements Insertable<LedgerRow> {
     }
     map['is_closeout'] = Variable<bool>(isCloseout);
     map['superseded_by_closeout'] = Variable<bool>(supersededByCloseout);
+    if (!nullToAbsent || voidedAt != null) {
+      map['voided_at'] = Variable<DateTime>(voidedAt);
+    }
+    if (!nullToAbsent || voidedReason != null) {
+      map['voided_reason'] = Variable<String>(voidedReason);
+    }
     map['created_at'] = Variable<DateTime>(createdAt);
     return map;
   }
@@ -736,6 +802,12 @@ class LedgerRow extends DataClass implements Insertable<LedgerRow> {
       source: Value(source),
       isCloseout: Value(isCloseout),
       supersededByCloseout: Value(supersededByCloseout),
+      voidedAt: voidedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(voidedAt),
+      voidedReason: voidedReason == null && nullToAbsent
+          ? const Value.absent()
+          : Value(voidedReason),
       createdAt: Value(createdAt),
     );
   }
@@ -762,6 +834,8 @@ class LedgerRow extends DataClass implements Insertable<LedgerRow> {
       supersededByCloseout: serializer.fromJson<bool>(
         json['supersededByCloseout'],
       ),
+      voidedAt: serializer.fromJson<DateTime?>(json['voidedAt']),
+      voidedReason: serializer.fromJson<String?>(json['voidedReason']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
     );
   }
@@ -783,6 +857,8 @@ class LedgerRow extends DataClass implements Insertable<LedgerRow> {
       ),
       'isCloseout': serializer.toJson<bool>(isCloseout),
       'supersededByCloseout': serializer.toJson<bool>(supersededByCloseout),
+      'voidedAt': serializer.toJson<DateTime?>(voidedAt),
+      'voidedReason': serializer.toJson<String?>(voidedReason),
       'createdAt': serializer.toJson<DateTime>(createdAt),
     };
   }
@@ -798,6 +874,8 @@ class LedgerRow extends DataClass implements Insertable<LedgerRow> {
     EntrySource? source,
     bool? isCloseout,
     bool? supersededByCloseout,
+    Value<DateTime?> voidedAt = const Value.absent(),
+    Value<String?> voidedReason = const Value.absent(),
     DateTime? createdAt,
   }) => LedgerRow(
     id: id ?? this.id,
@@ -810,6 +888,8 @@ class LedgerRow extends DataClass implements Insertable<LedgerRow> {
     source: source ?? this.source,
     isCloseout: isCloseout ?? this.isCloseout,
     supersededByCloseout: supersededByCloseout ?? this.supersededByCloseout,
+    voidedAt: voidedAt.present ? voidedAt.value : this.voidedAt,
+    voidedReason: voidedReason.present ? voidedReason.value : this.voidedReason,
     createdAt: createdAt ?? this.createdAt,
   );
   LedgerRow copyWithCompanion(LedgerEntriesCompanion data) {
@@ -836,6 +916,10 @@ class LedgerRow extends DataClass implements Insertable<LedgerRow> {
       supersededByCloseout: data.supersededByCloseout.present
           ? data.supersededByCloseout.value
           : this.supersededByCloseout,
+      voidedAt: data.voidedAt.present ? data.voidedAt.value : this.voidedAt,
+      voidedReason: data.voidedReason.present
+          ? data.voidedReason.value
+          : this.voidedReason,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
     );
   }
@@ -853,6 +937,8 @@ class LedgerRow extends DataClass implements Insertable<LedgerRow> {
           ..write('source: $source, ')
           ..write('isCloseout: $isCloseout, ')
           ..write('supersededByCloseout: $supersededByCloseout, ')
+          ..write('voidedAt: $voidedAt, ')
+          ..write('voidedReason: $voidedReason, ')
           ..write('createdAt: $createdAt')
           ..write(')'))
         .toString();
@@ -870,6 +956,8 @@ class LedgerRow extends DataClass implements Insertable<LedgerRow> {
     source,
     isCloseout,
     supersededByCloseout,
+    voidedAt,
+    voidedReason,
     createdAt,
   );
   @override
@@ -886,6 +974,8 @@ class LedgerRow extends DataClass implements Insertable<LedgerRow> {
           other.source == this.source &&
           other.isCloseout == this.isCloseout &&
           other.supersededByCloseout == this.supersededByCloseout &&
+          other.voidedAt == this.voidedAt &&
+          other.voidedReason == this.voidedReason &&
           other.createdAt == this.createdAt);
 }
 
@@ -900,6 +990,8 @@ class LedgerEntriesCompanion extends UpdateCompanion<LedgerRow> {
   final Value<EntrySource> source;
   final Value<bool> isCloseout;
   final Value<bool> supersededByCloseout;
+  final Value<DateTime?> voidedAt;
+  final Value<String?> voidedReason;
   final Value<DateTime> createdAt;
   const LedgerEntriesCompanion({
     this.id = const Value.absent(),
@@ -912,6 +1004,8 @@ class LedgerEntriesCompanion extends UpdateCompanion<LedgerRow> {
     this.source = const Value.absent(),
     this.isCloseout = const Value.absent(),
     this.supersededByCloseout = const Value.absent(),
+    this.voidedAt = const Value.absent(),
+    this.voidedReason = const Value.absent(),
     this.createdAt = const Value.absent(),
   });
   LedgerEntriesCompanion.insert({
@@ -925,6 +1019,8 @@ class LedgerEntriesCompanion extends UpdateCompanion<LedgerRow> {
     this.source = const Value.absent(),
     this.isCloseout = const Value.absent(),
     this.supersededByCloseout = const Value.absent(),
+    this.voidedAt = const Value.absent(),
+    this.voidedReason = const Value.absent(),
     required DateTime createdAt,
   }) : kind = Value(kind),
        amountCents = Value(amountCents),
@@ -942,6 +1038,8 @@ class LedgerEntriesCompanion extends UpdateCompanion<LedgerRow> {
     Expression<int>? source,
     Expression<bool>? isCloseout,
     Expression<bool>? supersededByCloseout,
+    Expression<DateTime>? voidedAt,
+    Expression<String>? voidedReason,
     Expression<DateTime>? createdAt,
   }) {
     return RawValuesInsertable({
@@ -956,6 +1054,8 @@ class LedgerEntriesCompanion extends UpdateCompanion<LedgerRow> {
       if (isCloseout != null) 'is_closeout': isCloseout,
       if (supersededByCloseout != null)
         'superseded_by_closeout': supersededByCloseout,
+      if (voidedAt != null) 'voided_at': voidedAt,
+      if (voidedReason != null) 'voided_reason': voidedReason,
       if (createdAt != null) 'created_at': createdAt,
     });
   }
@@ -971,6 +1071,8 @@ class LedgerEntriesCompanion extends UpdateCompanion<LedgerRow> {
     Value<EntrySource>? source,
     Value<bool>? isCloseout,
     Value<bool>? supersededByCloseout,
+    Value<DateTime?>? voidedAt,
+    Value<String?>? voidedReason,
     Value<DateTime>? createdAt,
   }) {
     return LedgerEntriesCompanion(
@@ -984,6 +1086,8 @@ class LedgerEntriesCompanion extends UpdateCompanion<LedgerRow> {
       source: source ?? this.source,
       isCloseout: isCloseout ?? this.isCloseout,
       supersededByCloseout: supersededByCloseout ?? this.supersededByCloseout,
+      voidedAt: voidedAt ?? this.voidedAt,
+      voidedReason: voidedReason ?? this.voidedReason,
       createdAt: createdAt ?? this.createdAt,
     );
   }
@@ -1027,6 +1131,12 @@ class LedgerEntriesCompanion extends UpdateCompanion<LedgerRow> {
         supersededByCloseout.value,
       );
     }
+    if (voidedAt.present) {
+      map['voided_at'] = Variable<DateTime>(voidedAt.value);
+    }
+    if (voidedReason.present) {
+      map['voided_reason'] = Variable<String>(voidedReason.value);
+    }
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
     }
@@ -1046,6 +1156,8 @@ class LedgerEntriesCompanion extends UpdateCompanion<LedgerRow> {
           ..write('source: $source, ')
           ..write('isCloseout: $isCloseout, ')
           ..write('supersededByCloseout: $supersededByCloseout, ')
+          ..write('voidedAt: $voidedAt, ')
+          ..write('voidedReason: $voidedReason, ')
           ..write('createdAt: $createdAt')
           ..write(')'))
         .toString();
@@ -1599,6 +1711,8 @@ typedef $$LedgerEntriesTableCreateCompanionBuilder =
       Value<EntrySource> source,
       Value<bool> isCloseout,
       Value<bool> supersededByCloseout,
+      Value<DateTime?> voidedAt,
+      Value<String?> voidedReason,
       required DateTime createdAt,
     });
 typedef $$LedgerEntriesTableUpdateCompanionBuilder =
@@ -1613,6 +1727,8 @@ typedef $$LedgerEntriesTableUpdateCompanionBuilder =
       Value<EntrySource> source,
       Value<bool> isCloseout,
       Value<bool> supersededByCloseout,
+      Value<DateTime?> voidedAt,
+      Value<String?> voidedReason,
       Value<DateTime> createdAt,
     });
 
@@ -1700,6 +1816,16 @@ class $$LedgerEntriesTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
+  ColumnFilters<DateTime> get voidedAt => $composableBuilder(
+    column: $table.voidedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get voidedReason => $composableBuilder(
+    column: $table.voidedReason,
+    builder: (column) => ColumnFilters(column),
+  );
+
   ColumnFilters<DateTime> get createdAt => $composableBuilder(
     column: $table.createdAt,
     builder: (column) => ColumnFilters(column),
@@ -1783,6 +1909,16 @@ class $$LedgerEntriesTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<DateTime> get voidedAt => $composableBuilder(
+    column: $table.voidedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get voidedReason => $composableBuilder(
+    column: $table.voidedReason,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get createdAt => $composableBuilder(
     column: $table.createdAt,
     builder: (column) => ColumnOrderings(column),
@@ -1858,6 +1994,14 @@ class $$LedgerEntriesTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<DateTime> get voidedAt =>
+      $composableBuilder(column: $table.voidedAt, builder: (column) => column);
+
+  GeneratedColumn<String> get voidedReason => $composableBuilder(
+    column: $table.voidedReason,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<DateTime> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
 
@@ -1923,6 +2067,8 @@ class $$LedgerEntriesTableTableManager
                 Value<EntrySource> source = const Value.absent(),
                 Value<bool> isCloseout = const Value.absent(),
                 Value<bool> supersededByCloseout = const Value.absent(),
+                Value<DateTime?> voidedAt = const Value.absent(),
+                Value<String?> voidedReason = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
               }) => LedgerEntriesCompanion(
                 id: id,
@@ -1935,6 +2081,8 @@ class $$LedgerEntriesTableTableManager
                 source: source,
                 isCloseout: isCloseout,
                 supersededByCloseout: supersededByCloseout,
+                voidedAt: voidedAt,
+                voidedReason: voidedReason,
                 createdAt: createdAt,
               ),
           createCompanionCallback:
@@ -1949,6 +2097,8 @@ class $$LedgerEntriesTableTableManager
                 Value<EntrySource> source = const Value.absent(),
                 Value<bool> isCloseout = const Value.absent(),
                 Value<bool> supersededByCloseout = const Value.absent(),
+                Value<DateTime?> voidedAt = const Value.absent(),
+                Value<String?> voidedReason = const Value.absent(),
                 required DateTime createdAt,
               }) => LedgerEntriesCompanion.insert(
                 id: id,
@@ -1961,6 +2111,8 @@ class $$LedgerEntriesTableTableManager
                 source: source,
                 isCloseout: isCloseout,
                 supersededByCloseout: supersededByCloseout,
+                voidedAt: voidedAt,
+                voidedReason: voidedReason,
                 createdAt: createdAt,
               ),
           withReferenceMapper: (p0) => p0

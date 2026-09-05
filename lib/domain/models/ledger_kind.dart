@@ -20,10 +20,25 @@ enum LedgerKind {
   fiadoPayment,
 }
 
+/// The kinds that are money earned. Stated as a list of what counts, never as
+/// "everything except fiadoIssued".
+///
+/// The difference matters the day someone appends a kind. An exclusion test
+/// answers "yes, income" for a refund, an adjustment or a chargeback the
+/// moment it exists, and nothing fails — the trend line just quietly starts
+/// reporting money going out as money coming in. With this set, a new kind is
+/// not income until somebody writes it down here.
+const Set<LedgerKind> incomeKinds = {
+  LedgerKind.cashSale,
+  LedgerKind.qrSale,
+  LedgerKind.cardSale,
+  LedgerKind.fiadoPayment,
+};
+
 extension LedgerKindX on LedgerKind {
   /// The single rule the dashboard total rests on: a fiado issued is money
-  /// lent, not money earned. Everything else is income.
-  bool get isIncome => this != LedgerKind.fiadoIssued;
+  /// lent, not money earned.
+  bool get isIncome => incomeKinds.contains(this);
 
   bool get isFiado => this == LedgerKind.fiadoIssued || this == LedgerKind.fiadoPayment;
 

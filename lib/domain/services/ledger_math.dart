@@ -12,14 +12,16 @@ import '../models/ledger_kind.dart';
 abstract final class LedgerMath {
   /// Ventas del día = QR + tarjeta + efectivo + cobros de fiado.
   ///
-  /// Two exclusions are structural rather than subtracted afterwards:
-  /// fiados *issued* are money lent (tracked separately in
-  /// [DailyTotals.fiadoIssuedCents]), and entries replaced by an end-of-day
-  /// close no longer exist for totalling purposes.
+  /// The exclusions are structural rather than subtracted afterwards: fiados
+  /// *issued* are money lent (tracked separately in
+  /// [DailyTotals.fiadoIssuedCents]), and entries that a day-close replaced or
+  /// the merchant voided do not exist for totalling purposes.
   static DailyTotals totals(Iterable<LedgerEntry> entries) {
     var qr = 0, card = 0, cash = 0, collected = 0, issued = 0, count = 0;
     for (final e in entries) {
-      if (e.supersededByCloseout) continue;
+      // Replaced by a day-close, or voided as a mistake. Either way the row is
+      // still on file and still shown; it just no longer counts.
+      if (!e.countsInTotals) continue;
       count++;
       switch (e.kind) {
         case LedgerKind.qrSale:
@@ -89,7 +91,7 @@ abstract final class LedgerMath {
     final byCustomer = <int, List<LedgerEntry>>{};
     for (final e in fiadoEntries) {
       final id = e.customerId;
-      if (id == null || !e.kind.isFiado || e.supersededByCloseout) continue;
+      if (id == null || !e.kind.isFiado || !e.countsInTotals) continue;
       (byCustomer[id] ??= []).add(e);
     }
     return [
@@ -144,7 +146,7 @@ abstract final class LedgerMath {
   /// Running balance beside each row of a customer's statement.
   ///
   /// The balance shown is the one *after* that entry, and the list comes back
-  /// newest-first for display.
+  /// newest-first for display. Voided rows are listed but do not move it.
   static List<({LedgerEntry entry, int balanceCents})> statement(
     Iterable<LedgerEntry> entries,
   ) {
@@ -155,8 +157,13 @@ abstract final class LedgerMath {
     final rows = <({LedgerEntry entry, int balanceCents})>[];
     var running = 0;
     for (final e in ordered) {
-      running += e.kind == LedgerKind.fiadoIssued ? e.amountCents : -e.amountCents;
-      if (running < 0) running = 0;
+      // A voided row stays in the statement — that is the point of voiding
+      // rather than deleting — but it does not move the balance, so the
+      // running figure beside it is the balance as it actually stood.
+      if (e.countsInTotals) {
+        running += e.kind == LedgerKind.fiadoIssued ? e.amountCents : -e.amountCents;
+        if (running < 0) running = 0;
+      }
       rows.add((entry: e, balanceCents: running));
     }
     return rows.reversed.toList();

@@ -14,7 +14,7 @@ class AppDatabase extends _$AppDatabase {
       : super(executor ?? driftDatabase(name: 'libreta'));
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -31,6 +31,14 @@ class AppDatabase extends _$AppDatabase {
           await customStatement(
             'CREATE INDEX IF NOT EXISTS idx_customer_search ON customers (search_key)',
           );
+        },
+        onUpgrade: (m, from, to) async {
+          if (from < 2) {
+            // Voiding replaces the hard delete. Both columns are nullable, so
+            // every existing row is simply "not voided" and no data moves.
+            await m.addColumn(ledgerEntries, ledgerEntries.voidedAt);
+            await m.addColumn(ledgerEntries, ledgerEntries.voidedReason);
+          }
         },
         beforeOpen: (details) async {
           await customStatement('PRAGMA foreign_keys = ON');
@@ -59,6 +67,8 @@ extension LedgerRowX on LedgerRow {
         source: source,
         isCloseout: isCloseout,
         supersededByCloseout: supersededByCloseout,
+        voidedAt: voidedAt,
+        voidedReason: voidedReason,
         createdAt: createdAt,
       );
 }

@@ -282,4 +282,39 @@ void main() {
       expect(find.text(r'$10.00'), findsNWidgets(2));
     });
   });
+
+  testWidgets('a mistaken fiado is voided, not deleted, and stays on the page',
+      (tester) async {
+    await withApp(tester, () async {
+      await addFiadoFor(tester, 'María González', r'$20.00');
+
+      await tapText(tester, 'Libreta');
+      await tapText(tester, 'María González');
+      expect(find.text(r'$20.00'), findsWidgets);
+
+      // Swipe the entry and give a reason.
+      await tester.drag(find.text('Fiado').last, const Offset(-400, 0));
+      await tester.pumpAndSettle();
+      expect(find.text('¿Por qué lo anulas?'), findsOneWidget);
+      await tapText(tester, 'Me equivoqué en el monto');
+
+      expect(find.text('Registro anulado'), findsOneWidget);
+
+      // The row is still there, marked with the reason — this is the whole
+      // difference from a delete.
+      expect(find.textContaining('Anulado'), findsOneWidget);
+      expect(find.textContaining('Me equivoqué en el monto'), findsWidgets);
+
+      // And the debt is gone from every place that reports it.
+      expect(find.text('No hay deuda pendiente.'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Atrás'));
+      await tester.pumpAndSettle();
+      expect(find.text('Tu libreta está limpia'), findsOneWidget);
+
+      await tapText(tester, 'Inicio');
+      expect(find.text('TE DEBEN'), findsNothing);
+      expect(find.text(r'$0.00'), findsNWidgets(5));
+    });
+  });
 }

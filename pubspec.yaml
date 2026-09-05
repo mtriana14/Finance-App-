@@ -39,6 +39,11 @@ dev_dependencies:
   drift_dev: ^2.28.2
   build_runner: ^2.10.1
 
+  # Used directly by the migration test, which builds a v1 database by hand
+  # before opening the current schema on top of it. Declared rather than
+  # borrowed from drift's transitive deps.
+  sqlite3: ^2.9.0
+
   # Build-time generators for the launcher icon and splash screen. Neither
   # ships in the APK, so the v1 runtime stack is unchanged.
   flutter_launcher_icons: ^0.14.4
