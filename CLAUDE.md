@@ -209,3 +209,9 @@ Currently version 2. Every bump needs a branch in `onUpgrade` *and* a test in
 the current one over it. A migration that drops a column does not throw
 anything a merchant would notice — it just loses the record of who owes them
 money.
+
+## ai_team/ — not part of this app
+
+`ai_team/` is a separate Python founder tool built by Codex. It is not
+part of the Flutter app and shares no code with it. Do not read, modify,
+or reason about it. `flutter analyze` and `flutter test` do not cover it.
