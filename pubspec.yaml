@@ -39,6 +39,50 @@ dev_dependencies:
   drift_dev: ^2.28.2
   build_runner: ^2.10.1
 
+  # Build-time generators for the launcher icon and splash screen. Neither
+  # ships in the APK, so the v1 runtime stack is unchanged.
+  flutter_launcher_icons: ^0.14.4
+  flutter_native_splash: ^2.4.6
+
+# Source artwork lives in assets/branding/ and is deliberately NOT declared
+# under flutter.assets: these are inputs to the generators below, not runtime
+# assets, and bundling them would add ~1MB to the APK for nothing.
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/branding/icon_legacy.png"
+  adaptive_icon_background: "#08090B"
+  adaptive_icon_foreground: "assets/branding/icon_foreground.png"
+  adaptive_icon_monochrome: "assets/branding/icon_monochrome.png"
+  min_sdk_android: 24
+  # The generator insets the foreground by 16% on top of whatever it is given,
+  # which is right for artwork drawn edge-to-edge. This artwork is already
+  # sized to the adaptive safe circle, so a second inset would stack with the
+  # first and ship a mark roughly 40% smaller than the one that was measured.
+  adaptive_icon_foreground_inset: 0
+
+flutter_native_splash:
+  android: true
+  ios: false
+  web: false
+  color: "#08090B"
+  image: assets/branding/splash_logo.png
+  android_gravity: center
+  # The app has no light variant, so dark resolves to the same thing.
+  color_dark: "#08090B"
+  image_dark: assets/branding/splash_logo.png
+
+  # Android 12 replaced the full-screen splash with a centred-icon window and
+  # ignores the legacy keys entirely. Without this block the app flashes white
+  # on every device from Android 12 onward, however the config above reads.
+  android_12:
+    color: "#08090B"
+    image: assets/branding/splash_logo.png
+    icon_background_color: "#08090B"
+    color_dark: "#08090B"
+    image_dark: assets/branding/splash_logo.png
+    icon_background_color_dark: "#08090B"
+
 flutter:
   uses-material-design: true
 
