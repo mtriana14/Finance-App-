@@ -93,7 +93,7 @@ class _CustomerDetailScreenState extends ConsumerState<CustomerDetailScreen> {
                 return _StatementRow(
                   entry: shown[row].entry,
                   balanceCents: shown[row].balanceCents,
-                  onDelete: () => _confirmDelete(shown[row].entry),
+                  onVoid: () => _confirmVoid(shown[row].entry),
                 );
               },
             ),
@@ -141,22 +141,17 @@ class _CustomerDetailScreenState extends ConsumerState<CustomerDetailScreen> {
     showSavedSnack(context, 'Pago registrado');
   }
 
-  Future<void> _confirmDelete(LedgerEntry entry) async {
-    final ok = await confirmSheet(
-      context,
-      title: '¿Eliminar este registro?',
-      message: 'Se quitará de la cuenta de este cliente. No se puede deshacer.',
-      confirmLabel: 'Eliminar',
-      destructive: true,
-      icon: AppIcons.trash,
-    );
-    if (!ok) return;
-    final deleted = await ref.read(ledgerRepositoryProvider).deleteEntry(entry.id);
+  Future<void> _confirmVoid(LedgerEntry entry) async {
+    final reason = await showVoidReasonSheet(context);
+    if (reason == null || !mounted) return;
+
+    final voided =
+        await ref.read(ledgerRepositoryProvider).voidEntry(entry.id, reason: reason);
     if (!mounted) return;
-    if (deleted) {
-      showSnack(context, 'Registro eliminado');
+    if (voided) {
+      showSnack(context, 'Registro anulado');
     } else {
-      showSnack(context, 'Solo puedes eliminar registros del último día', danger: true);
+      showSnack(context, 'Solo puedes anular registros del último día', danger: true);
     }
   }
 }
@@ -244,18 +239,20 @@ class _StatementRow extends StatelessWidget {
   const _StatementRow({
     required this.entry,
     required this.balanceCents,
-    required this.onDelete,
+    required this.onVoid,
   });
 
   final LedgerEntry entry;
   final int balanceCents;
-  final VoidCallback onDelete;
+  final VoidCallback onVoid;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
     final isPayment = entry.kind == LedgerKind.fiadoPayment;
-    final deletable = entry.deletableAt(DateTime.now());
+    final voided = entry.isVoided;
+    // A voided row can no longer be voided again, so it loses the swipe.
+    final voidable = !voided && entry.correctableAt(DateTime.now());
 
     final row = Padding(
       padding: const EdgeInsets.symmetric(vertical: Gap.compact),
@@ -263,9 +260,11 @@ class _StatementRow extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           AppIcon(
-            isPayment ? AppIcons.check : AppIcons.arrowOut,
+            voided
+                ? AppIcons.close
+                : (isPayment ? AppIcons.check : AppIcons.arrowOut),
             size: 18,
-            color: isPayment ? c.success : c.textSecondary,
+            color: voided ? c.textDisabled : (isPayment ? c.success : c.textSecondary),
           ),
           const SizedBox(width: Gap.compact),
           Expanded(
@@ -275,7 +274,13 @@ class _StatementRow extends StatelessWidget {
                 Text(
                   isPayment ? 'Pagó' : 'Fiado',
                   style: AppText.bodySmallMedium(
-                      color: isPayment ? c.success : c.textPrimary),
+                    color: voided
+                        ? c.textDisabled
+                        : (isPayment ? c.success : c.textPrimary),
+                  ).copyWith(
+                    decoration: voided ? TextDecoration.lineThrough : null,
+                    decorationColor: c.textDisabled,
+                  ),
                 ),
                 if (entry.note != null && entry.note!.isNotEmpty) ...[
                   const SizedBox(height: 2),
@@ -283,12 +288,19 @@ class _StatementRow extends StatelessWidget {
                     entry.note!,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: AppText.bodySmall(color: c.textSecondary),
+                    style: AppText.bodySmall(
+                        color: voided ? c.textDisabled : c.textSecondary),
                   ),
                 ],
                 const SizedBox(height: 2),
-                Text(Dates.shortDay(entry.occurredAt),
-                    style: AppText.caption(color: c.textSecondary)),
+                Text(
+                  voided
+                      ? 'Anulado · ${entry.voidedReason ?? 'sin motivo'}'
+                      : Dates.shortDay(entry.occurredAt),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppText.caption(color: voided ? c.danger : c.textSecondary),
+                ),
               ],
             ),
           ),
@@ -298,7 +310,14 @@ class _StatementRow extends StatelessWidget {
             children: [
               Text(
                 isPayment ? '−${Money.format(entry.amountCents)}' : Money.format(entry.amountCents),
-                style: AppText.moneyBody(color: isPayment ? c.success : c.textPrimary),
+                style: AppText.moneyBody(
+                  color: voided
+                      ? c.textDisabled
+                      : (isPayment ? c.success : c.textPrimary),
+                ).copyWith(
+                  decoration: voided ? TextDecoration.lineThrough : null,
+                  decorationColor: c.textDisabled,
+                ),
               ),
               const SizedBox(height: 2),
               Text('saldo ${Money.format(balanceCents)}',
@@ -309,27 +328,29 @@ class _StatementRow extends StatelessWidget {
       ),
     );
 
-    if (!deletable) {
+    if (!voidable) {
       return Column(
         children: [row, Divider(color: c.border, height: 1)],
       );
     }
 
-    // Swipe to correct a mistake, available for 24 hours after logging.
+    // Swipe to correct a mistake, available for 24 hours after logging. The
+    // row is never dismissed — confirmDismiss always returns false — because
+    // voiding leaves it in place rather than removing it from the list.
     return Column(
       children: [
         Dismissible(
           key: ValueKey('entry-${entry.id}'),
           direction: DismissDirection.endToStart,
           confirmDismiss: (_) async {
-            onDelete();
+            onVoid();
             return false;
           },
           background: Container(
             alignment: Alignment.centerRight,
             padding: const EdgeInsets.only(right: Gap.standard),
             color: c.dangerLight,
-            child: AppIcon(AppIcons.trash, size: 20, color: c.danger),
+            child: AppIcon(AppIcons.close, size: 20, color: c.danger),
           ),
           child: row,
         ),

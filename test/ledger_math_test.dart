@@ -18,6 +18,8 @@ LedgerEntry entry(
   String? note,
   bool superseded = false,
   DateTime? createdAt,
+  DateTime? voidedAt,
+  String? voidedReason,
 }) {
   final when = at ?? DateTime(2026, 9, 2, 12);
   return LedgerEntry(
@@ -28,6 +30,8 @@ LedgerEntry entry(
     customerId: customerId,
     note: note,
     supersededByCloseout: superseded,
+    voidedAt: voidedAt,
+    voidedReason: voidedReason,
     createdAt: createdAt ?? when,
   );
 }
@@ -359,6 +363,116 @@ void main() {
       expect(Money.parse('999999999.99'), Money.maxParsableCents);
       expect(Money.parse('1000000000'), isNull);
       expect(Money.parse('99999999999999999999999'), isNull);
+    });
+  });
+
+  group('Income is an inclusion list', () {
+    test('names exactly the four kinds that are money earned', () {
+      expect(incomeKinds, {
+        LedgerKind.cashSale,
+        LedgerKind.qrSale,
+        LedgerKind.cardSale,
+        LedgerKind.fiadoPayment,
+      });
+      for (final kind in LedgerKind.values) {
+        expect(kind.isIncome, incomeKinds.contains(kind), reason: '$kind');
+      }
+      expect(LedgerKind.fiadoIssued.isIncome, isFalse);
+    });
+
+    test('a newly added kind is not income until it is named', () {
+      // A tripwire, not a formality. This fails the moment someone appends a
+      // kind, which is exactly when they have to decide whether it is revenue
+      // — under the old `!= fiadoIssued` test that decision was made silently
+      // and wrongly.
+      expect(
+        LedgerKind.values.length,
+        5,
+        reason: 'A LedgerKind was added. Decide explicitly whether it belongs '
+            'in incomeKinds, then update this count.',
+      );
+    });
+  });
+
+  group('Voided entries', () {
+    test('are excluded from the day total but keep their place on file', () {
+      final entries = [
+        entry(LedgerKind.cashSale, 2500),
+        entry(LedgerKind.cashSale, 1000,
+            voidedAt: DateTime(2026, 9, 2, 13), voidedReason: 'Me equivoqué en el monto'),
+      ];
+      final totals = LedgerMath.totals(entries);
+      expect(totals.cashCents, 2500);
+      expect(totals.totalCents, 2500);
+      // Counted rows only; the voided one is still in the list passed in.
+      expect(totals.entryCount, 1);
+      expect(entries.length, 2);
+    });
+
+    test('a voided fiado stops counting toward what a customer owes', () {
+      final customers = [customer(1, 'María González')];
+      final live = entry(LedgerKind.fiadoIssued, 4500, customerId: 1, at: DateTime(2026, 8, 15));
+      final mistake = entry(LedgerKind.fiadoIssued, 9900,
+          customerId: 1,
+          at: DateTime(2026, 8, 16),
+          voidedAt: DateTime(2026, 8, 16, 12),
+          voidedReason: 'Me equivoqué en el monto');
+
+      final balances = LedgerMath.balances(customers, [live, mistake]);
+      expect(balances.single.balanceCents, 4500);
+      expect(LedgerMath.outstandingTotal(balances), 4500);
+    });
+
+    test('a voided payment does not wipe out a debt that is still owed', () {
+      final customers = [customer(1, 'Juan Pérez')];
+      final entries = [
+        entry(LedgerKind.fiadoIssued, 3000, customerId: 1, at: DateTime(2026, 8, 1)),
+        entry(LedgerKind.fiadoPayment, 3000,
+            customerId: 1,
+            at: DateTime(2026, 8, 2),
+            voidedAt: DateTime(2026, 8, 2, 10),
+            voidedReason: 'No era este cliente'),
+      ];
+      expect(LedgerMath.balances(customers, entries).single.balanceCents, 3000);
+    });
+
+    test('stay in the statement without moving the running balance', () {
+      final entries = [
+        entry(LedgerKind.fiadoIssued, 4000, customerId: 1, at: DateTime(2026, 8, 15)),
+        entry(LedgerKind.fiadoIssued, 9900,
+            customerId: 1,
+            at: DateTime(2026, 8, 16),
+            voidedAt: DateTime(2026, 8, 16, 12),
+            voidedReason: 'Me equivoqué en el monto'),
+        entry(LedgerKind.fiadoPayment, 1000, customerId: 1, at: DateTime(2026, 8, 20)),
+      ];
+      final rows = LedgerMath.statement(entries);
+
+      // Newest first. The voided row is listed — that is the whole point — and
+      // the balance beside it is the balance as it actually stood.
+      expect(rows.length, 3);
+      expect(rows.map((r) => r.balanceCents).toList(), [3000, 4000, 4000]);
+      expect(rows[1].entry.isVoided, isTrue);
+      expect(rows[1].entry.voidedReason, 'Me equivoqué en el monto');
+    });
+
+    test('do not count toward the trend or the weekly chart', () {
+      final now = DateTime(2026, 9, 2, 12);
+      final today = [
+        entry(LedgerKind.cashSale, 5000, at: DateTime(2026, 9, 2, 11)),
+        entry(LedgerKind.cashSale, 9900,
+            at: DateTime(2026, 9, 2, 11, 30), voidedAt: now, voidedReason: 'Lo registré dos veces'),
+      ];
+      final yesterday = [entry(LedgerKind.cashSale, 5000, at: DateTime(2026, 9, 1, 11))];
+
+      expect(LedgerMath.trend(today: today, yesterday: yesterday, now: now), 0.0);
+
+      final bars = LedgerMath.weekBars(
+        entries: today,
+        now: now,
+        firstActivityDay: DateTime(2026, 9, 1),
+      );
+      expect(bars.last.totalCents, 5000);
     });
   });
 }

@@ -172,3 +172,86 @@ class WarningBanner extends StatelessWidget {
 }
 
 enum WarningTone { caution, danger, info }
+
+/// Asks why an entry is being voided, and returns the reason.
+///
+/// A tap-to-pick list rather than a free-text box: the merchant is correcting
+/// a mistake mid-conversation with a customer standing in front of them, and
+/// the reasons that actually occur are few. Returns null if they back out.
+Future<String?> showVoidReasonSheet(BuildContext context) {
+  const reasons = [
+    'Me equivoqué en el monto',
+    'No era este cliente',
+    'Lo registré dos veces',
+    'El cliente devolvió el producto',
+  ];
+
+  return showModalBottomSheet<String>(
+    context: context,
+    isScrollControlled: true,
+    builder: (context) {
+      final c = context.colors;
+      return SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(Gap.standard, Gap.compact, Gap.standard, Gap.standard),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: Gap.section),
+                  decoration:
+                      BoxDecoration(color: c.border, borderRadius: BorderRadius.circular(2)),
+                ),
+              ),
+              Text('¿Por qué lo anulas?',
+                  textAlign: TextAlign.center, style: AppText.subheading(color: c.textPrimary)),
+              const SizedBox(height: Gap.tight),
+              Text(
+                'El registro no se borra. Queda tachado en la cuenta del cliente '
+                'con el motivo, para que puedas mostrarlo después.',
+                textAlign: TextAlign.center,
+                style: AppText.bodySmall(color: c.textSecondary),
+              ),
+              const SizedBox(height: Gap.section),
+              for (final reason in reasons)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: Gap.tight),
+                  child: Material(
+                    color: c.surface,
+                    borderRadius: BorderRadius.circular(Sizes.cardRadius),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(Sizes.cardRadius),
+                      onTap: () => Navigator.of(context).pop(reason),
+                      child: Ink(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(Sizes.cardRadius),
+                          border: Border.all(color: c.border),
+                        ),
+                        child: Container(
+                          constraints: const BoxConstraints(minHeight: Sizes.tapTarget),
+                          alignment: Alignment.centerLeft,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: Gap.standard, vertical: Gap.compact),
+                          child: Text(reason, style: AppText.bodySmall(color: c.textPrimary)),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              const SizedBox(height: Gap.tight),
+              AppButton(
+                label: 'Cancelar',
+                style: AppButtonStyle.text,
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+}

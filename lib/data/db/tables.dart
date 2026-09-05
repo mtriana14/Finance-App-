@@ -54,6 +54,16 @@ class LedgerEntries extends Table {
   /// trail and shown grayed out, but is excluded from every total.
   BoolColumn get supersededByCloseout => boolean().withDefault(const Constant(false))();
 
+  /// When a mistaken entry was voided, and why.
+  ///
+  /// A ledger row is never deleted. The whole reason a merchant trusts this
+  /// over paper is that it settles an argument about who owes what, and a debt
+  /// that can vanish without a trace settles nothing. A void is visible,
+  /// reversible in principle, and carries the merchant's own reason for it;
+  /// a DELETE destroys the evidence that a correction ever happened.
+  DateTimeColumn get voidedAt => dateTime().nullable()();
+  TextColumn get voidedReason => text().nullable().withLength(max: 80)();
+
   DateTimeColumn get createdAt => dateTime()();
 }
 

@@ -325,17 +325,35 @@ class LedgerRepository {
   }
 
   /// Mistake correction, allowed only within 24 hours of logging.
-  /// Returns false if the window has closed.
-  Future<bool> deleteEntry(int id, {DateTime? now}) async {
+  ///
+  /// This voids the row; it never deletes it. A merchant uses this ledger to
+  /// settle an argument about who owes what, and an entry that can disappear
+  /// without a trace is worth less than the paper notebook it replaced. The
+  /// voided row keeps its place in the statement, struck through, alongside
+  /// the reason the merchant gave.
+  ///
+  /// Returns false if the entry is gone, already voided, or past the window.
+  Future<bool> voidEntry(int id, {required String reason, DateTime? now}) async {
     final at = now ?? DateTime.now();
     final row = await (_db.select(_db.ledgerEntries)..where((t) => t.id.equals(id)))
         .getSingleOrNull();
     if (row == null) return false;
-    if (!row.toDomain().deletableAt(at)) return false;
-    await (_db.delete(_db.ledgerEntries)..where((t) => t.id.equals(id))).go();
+
+    final entry = row.toDomain();
+    if (entry.isVoided || !entry.correctableAt(at)) return false;
+
+    await (_db.update(_db.ledgerEntries)..where((t) => t.id.equals(id))).write(
+      LedgerEntriesCompanion(
+        voidedAt: Value(at),
+        voidedReason: Value(_trimNote(reason)),
+      ),
+    );
     return true;
   }
 
+  /// Erases the ledger outright. This is the merchant deleting their own data
+  /// from Perfil — not a correction — so it is the one place a real DELETE is
+  /// the right thing.
   Future<void> deleteAll() => _db.delete(_db.ledgerEntries).go();
 
   static String? _trimNote(String? note) {

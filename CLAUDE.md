@@ -12,9 +12,8 @@ Read this before touching anything.
 These are not preferences. Breaking one produces a number a merchant will act
 on that is wrong, or a rewrite later.
 
-**Two are currently violated by the code.** They are stated here as the rule
-going forward, with the violation named so nobody assumes compliance. See
-*Known violations* below.
+All eight hold as of the commit that added this line. Each was checked against
+the code, not assumed — see the *Verified* notes.
 
 ### 1. Money is `int` cents, never `double`. Division only at display.
 
@@ -60,7 +59,12 @@ Test income with an **inclusion list of income kinds**, never `!= fiadoIssued`.
 The exclusion form silently counts the next kind anyone adds — a refund, an
 adjustment, a chargeback — as revenue.
 
-The daily total is built the right way: `LedgerMath.totals` switches
+*Verified:* `incomeKinds` in `ledger_kind.dart` names the four, and
+`isIncome` is `incomeKinds.contains(this)`. A test asserts the set and pins
+`LedgerKind.values.length`, so appending a kind fails the suite until somebody
+decides whether it is revenue.
+
+The daily total is built the same way: `LedgerMath.totals` switches
 exhaustively over every kind into a named bucket, and `totalCents` sums the
 four income buckets by name.
 
@@ -82,7 +86,22 @@ disagree the first time a payment path changes.
 
 A merchant arguing with a customer about a debt needs the history, including
 the correction. Deleting the row destroys the evidence that the correction
-happened.
+happened — and a debt that can vanish without a trace is worth less than the
+paper notebook this replaces.
+
+`LedgerRepository.voidEntry(id, reason:)` stamps `voided_at` / `voided_reason`
+and touches nothing else. The row keeps its place in the customer's statement,
+struck through with the reason, and stops counting everywhere:
+`LedgerEntry.countsInTotals` is the single test, used by `LedgerMath.totals`,
+`balances` and `statement`. The 24-hour correction window still applies, and an
+entry cannot be voided twice.
+
+The one real `DELETE` left is `deleteAll()`, behind "borrar todos mis datos" in
+Perfil. That is the merchant erasing their own data, not correcting an entry.
+
+*Verified:* `voided` appears in the schema, the repository, both screens and the
+CSV. A migration test builds a real v1 database on disk and opens the current
+schema over it.
 
 ### 7. No emoji in the UI. Stroke icons only.
 
@@ -102,43 +121,6 @@ through `core/format/dates.dart`.
 The one deliberate exception: `Money` builds its number pattern on `en_US`, to
 force `$1,234.56` with a decimal **point**. `es_EC` would render a comma. This
 is a formatting decision about USD, not a language leak.
-
----
-
-## Known violations
-
-Fix these before building on them. Neither is cosmetic.
-
-### Invariant 4 — income is tested by exclusion
-
-`lib/domain/models/ledger_kind.dart`:
-
-```dart
-bool get isIncome => this != LedgerKind.fiadoIssued;   // exclusion list
-```
-
-Reached through `LedgerEntry.countsAsIncome`, which drives the dashboard trend
-percentage (`LedgerMath.trend`), the 7-day chart (`LedgerMath.weekBars`) and the
-`cuenta_como_venta` column in the CSV export. Add a `refund` kind and all three
-count it as revenue, silently.
-
-The hero total and its breakdown are **not** affected — `LedgerMath.totals`
-already uses named buckets.
-
-Fix: `bool get isIncome => const {cashSale, qrSale, cardSale, fiadoPayment}.contains(this);`
-
-### Invariant 6 — the ledger hard-deletes
-
-`LedgerRepository.deleteEntry` runs a real `DELETE` (inside a 24-hour window),
-and there is no `voidedReason` column anywhere in the schema. Swipe-to-delete
-on a customer's statement destroys the row.
-
-A partial soft-void does exist: `superseded_by_closeout` marks the cash entries
-an end-of-day close replaced, and those rows survive, greyed out, in Historial.
-That is the pattern the rest of the ledger should follow.
-
-Fix: add `voided_at` / `voided_reason`, make `deleteEntry` a void, and exclude
-voided rows in `LedgerMath` the same way `supersededByCloseout` already is.
 
 ---
 
@@ -219,6 +201,15 @@ flutter run
 
 Generated drift code (`*.g.dart`) is committed, so the project builds without
 running the generator first.
+
+## Schema
+
+Currently version 2. Every bump needs a branch in `onUpgrade` *and* a test in
+`test/migration_test.dart` that builds the previous schema by hand and opens
+the current one over it. A migration that drops a column does not throw
+anything a merchant would notice — it just loses the record of who owes them
+money.
+
 ## ai_team/ — not part of this app
 
 `ai_team/` is a separate Python founder tool built by Codex. It is not

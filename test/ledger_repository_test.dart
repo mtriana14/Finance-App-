@@ -120,17 +120,60 @@ void main() {
   });
 
   group('Mistake correction', () {
-    test('an entry can be deleted within 24 hours', () async {
+    test('voiding keeps the row and stops it counting', () async {
       final id = await ledger.addSale(kind: LedgerKind.cashSale, amountCents: 500);
-      expect(await ledger.deleteEntry(id), isTrue);
-      expect(await ledger.watchDay(DateTime.now()).first, isEmpty);
+      expect(
+        await ledger.voidEntry(id, reason: 'Me equivoqué en el monto'),
+        isTrue,
+      );
+
+      final entries = await ledger.watchDay(DateTime.now()).first;
+      // The row survives — this is the difference between a void and a delete.
+      expect(entries.length, 1);
+      final voided = entries.single;
+      expect(voided.isVoided, isTrue);
+      expect(voided.voidedReason, 'Me equivoqué en el monto');
+      expect(voided.voidedAt, isNotNull);
+      expect(LedgerMath.totals(entries).totalCents, 0);
     });
 
-    test('the delete window closes after 24 hours', () async {
+    test('a fiado voided by mistake leaves the customer owing nothing extra',
+        () async {
+      final ana = await customers.create(name: 'Ana Vera');
+      await ledger.addFiado(customerId: ana.id, amountCents: 2000);
+      final wrong = await ledger.addFiado(customerId: ana.id, amountCents: 9900);
+
+      await ledger.voidEntry(wrong, reason: 'Me equivoqué en el monto');
+
+      final balances =
+          LedgerMath.balances([ana], await ledger.watchAllFiado().first);
+      expect(LedgerMath.outstandingTotal(balances), 2000);
+      // Both rows are still on file for the customer to see.
+      expect((await ledger.watchForCustomer(ana.id).first).length, 2);
+    });
+
+    test('the correction window closes after 24 hours', () async {
       final id = await ledger.addSale(kind: LedgerKind.cashSale, amountCents: 500);
       final tomorrow = DateTime.now().add(const Duration(hours: 25));
-      expect(await ledger.deleteEntry(id, now: tomorrow), isFalse);
-      expect((await ledger.watchDay(DateTime.now()).first).length, 1);
+      expect(await ledger.voidEntry(id, reason: 'tarde', now: tomorrow), isFalse);
+
+      final entry = (await ledger.watchDay(DateTime.now()).first).single;
+      expect(entry.isVoided, isFalse);
+      expect(LedgerMath.totals([entry]).totalCents, 500);
+    });
+
+    test('an entry cannot be voided twice', () async {
+      final id = await ledger.addSale(kind: LedgerKind.cashSale, amountCents: 500);
+      expect(await ledger.voidEntry(id, reason: 'primera'), isTrue);
+      expect(await ledger.voidEntry(id, reason: 'segunda'), isFalse);
+
+      // The first reason stands; a second attempt does not overwrite history.
+      final entry = (await ledger.watchDay(DateTime.now()).first).single;
+      expect(entry.voidedReason, 'primera');
+    });
+
+    test('voiding a missing entry reports failure rather than throwing', () async {
+      expect(await ledger.voidEntry(9999, reason: 'no existe'), isFalse);
     });
   });
 

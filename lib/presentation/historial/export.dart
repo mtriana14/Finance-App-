@@ -40,7 +40,12 @@ abstract final class LedgerExport {
         e.note ?? '',
         e.customerName ?? '',
         e.source.badge ?? 'manual',
-        e.supersededByCloseout ? 'reemplazado por cierre del dia' : 'activo',
+        if (e.isVoided)
+          'anulado: ${e.voidedReason ?? 'sin motivo'}'
+        else if (e.supersededByCloseout)
+          'reemplazado por cierre del dia'
+        else
+          'activo',
       ].map(_escape).join(','));
     }
     return buffer.toString();

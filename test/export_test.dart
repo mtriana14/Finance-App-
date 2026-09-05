@@ -10,6 +10,8 @@ LedgerEntry entry(
   String? note,
   String? customerName,
   DateTime? at,
+  DateTime? voidedAt,
+  String? voidedReason,
 }) =>
     LedgerEntry(
       id: 1,
@@ -19,6 +21,8 @@ LedgerEntry entry(
       note: note,
       customerId: customerName == null ? null : 1,
       customerName: customerName,
+      voidedAt: voidedAt,
+      voidedReason: voidedReason,
     );
 
 void main() {
@@ -108,6 +112,31 @@ void main() {
       expect(summary, contains(r'Cobros fiado: $15.00'));
       // Listed for context, and labelled as not being a sale.
       expect(summary, contains(r'Fiado dado (no cuenta como venta): $15.00'));
+    });
+  });
+
+  group('Voided rows in the export', () {
+    test('are exported with their reason, not omitted', () {
+      final csv = LedgerExport.toCsv([
+        entry(LedgerKind.fiadoIssued, 9900,
+            customerName: 'María González',
+            voidedAt: DateTime(2026, 9, 2, 15),
+            voidedReason: 'Me equivoqué en el monto'),
+      ]);
+      // The row is present, marked, and flagged as not a sale.
+      expect(csv, contains('anulado: Me equivoqué en el monto'));
+      expect(csv, contains('María González'));
+      expect(csv, contains(',no,'));
+    });
+
+    test('do not count toward the shared summary', () {
+      final summary = LedgerExport.toSummary([
+        entry(LedgerKind.cashSale, 2500),
+        entry(LedgerKind.cashSale, 9900,
+            voidedAt: DateTime(2026, 9, 2, 15), voidedReason: 'Lo registré dos veces'),
+      ], title: 'Resumen de ventas');
+      expect(summary, contains(r'TOTAL: $25.00'));
+      expect(summary, isNot(contains(r'$124.00')));
     });
   });
 }

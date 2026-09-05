@@ -319,10 +319,11 @@ class _EntryRow extends StatelessWidget {
     final c = context.colors;
     final isFiadoIssued = entry.kind == LedgerKind.fiadoIssued;
     final replaced = entry.supersededByCloseout;
+    final voided = entry.isVoided;
 
-    // A fiado issued and a replaced entry are both shown for visibility, and
-    // both are muted so it reads as "listed, not counted".
-    final muted = isFiadoIssued || replaced;
+    // A fiado issued, a replaced entry and a voided one are all shown for
+    // visibility, and all muted so it reads as "listed, not counted".
+    final muted = isFiadoIssued || replaced || voided;
 
     final icon = switch (entry.kind) {
       LedgerKind.cashSale => AppIcons.cash,
@@ -333,8 +334,9 @@ class _EntryRow extends StatelessWidget {
     };
 
     final subtitleParts = <String>[
+      if (voided) 'Anulado · ${entry.voidedReason ?? 'sin motivo'}',
       if (replaced) 'Reemplazado por cierre del día',
-      if (isFiadoIssued) 'No suma al total',
+      if (isFiadoIssued && !voided) 'No suma al total',
       if (entry.note != null && entry.note!.isNotEmpty && !entry.isCloseout) entry.note!,
     ];
 
@@ -365,6 +367,9 @@ class _EntryRow extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: AppText.bodySmallMedium(
                           color: muted ? c.textSecondary : c.textPrimary,
+                        ).copyWith(
+                          decoration: voided ? TextDecoration.lineThrough : null,
+                          decorationColor: c.textDisabled,
                         ),
                       ),
                     ),
@@ -398,8 +403,11 @@ class _EntryRow extends StatelessWidget {
           const SizedBox(width: Gap.tight),
           MoneyText(
             entry.amountCents,
-            style: AppText.moneyBody(),
-            color: replaced
+            style: AppText.moneyBody().copyWith(
+              decoration: voided ? TextDecoration.lineThrough : null,
+              decorationColor: c.textDisabled,
+            ),
+            color: (replaced || voided)
                 ? c.textDisabled
                 : isFiadoIssued
                     ? c.textSecondary
