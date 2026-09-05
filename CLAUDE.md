@@ -219,3 +219,8 @@ flutter run
 
 Generated drift code (`*.g.dart`) is committed, so the project builds without
 running the generator first.
+## ai_team/ — not part of this app
+
+`ai_team/` is a separate Python founder tool built by Codex. It is not
+part of the Flutter app and shares no code with it. Do not read, modify,
+or reason about it. `flutter analyze` and `flutter test` do not cover it.
