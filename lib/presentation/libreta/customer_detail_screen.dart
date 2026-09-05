@@ -252,7 +252,7 @@ class _StatementRow extends StatelessWidget {
     final isPayment = entry.kind == LedgerKind.fiadoPayment;
     final voided = entry.isVoided;
     // A voided row can no longer be voided again, so it loses the swipe.
-    final voidable = !voided && entry.deletableAt(DateTime.now());
+    final voidable = !voided && entry.correctableAt(DateTime.now());
 
     final row = Padding(
       padding: const EdgeInsets.symmetric(vertical: Gap.compact),

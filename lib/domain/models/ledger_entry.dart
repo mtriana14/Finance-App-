@@ -54,8 +54,9 @@ class LedgerEntry {
   /// A row counts as income only if it is an income kind and still stands.
   bool get countsAsIncome => kind.isIncome && countsInTotals;
 
-  /// Entries can be deleted by mistake-correction only within 24h of logging.
-  bool deletableAt(DateTime now) => now.difference(createdAt) < const Duration(hours: 24);
+  /// A mistake can be corrected only within 24h of logging. Nothing is
+  /// deleted — see [LedgerRepository.voidEntry] — so this gates the void.
+  bool correctableAt(DateTime now) => now.difference(createdAt) < const Duration(hours: 24);
 
   LedgerEntry copyWith({
     bool? supersededByCloseout,

@@ -340,7 +340,7 @@ class LedgerRepository {
     if (row == null) return false;
 
     final entry = row.toDomain();
-    if (entry.isVoided || !entry.deletableAt(at)) return false;
+    if (entry.isVoided || !entry.correctableAt(at)) return false;
 
     await (_db.update(_db.ledgerEntries)..where((t) => t.id.equals(id))).write(
       LedgerEntriesCompanion(
