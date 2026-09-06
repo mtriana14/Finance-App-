@@ -46,3 +46,22 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Python / AI team secrets and runtime artifacts
+.env
+.env.*
+**/.env
+**/.env.*
+!**/.env.example
+
+.venv/
+**/.venv/
+
+__pycache__/
+**/__pycache__/
+
+.pytest_cache/
+**/.pytest_cache/
+
+.coverage
+htmlcov/
